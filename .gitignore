@@ -1,0 +1,37 @@
+# ---------- STM32CubeIDE ----------
+# Keep: *.ioc, .project, .cproject, .mxproject, Core/, Drivers/, linker scripts
+firmware/**/Debug/
+firmware/**/Release/
+firmware/**/.settings/
+*.launch
+
+# ---------- Python ----------
+__pycache__/
+*.pyc
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# ---------- SolidWorks ----------
+# Lock/temp files created while a part is open
+~$*
+
+# ---------- Altium Designer ----------
+# Keep: *.PrjPcb, *.SchDoc, *.PcbDoc, *.SchLib, *.PcbLib, *.OutJob
+# Local version history and auto-generated outputs
+History/
+__Previews/
+Project Logs for */
+Project Outputs for */
+*.PrjPcbStructure
+*.SchDocPreview
+*.PcbDocPreview
+*.LOG
+Status Report.Txt
+# Final fab outputs (zipped Gerbers, BOM, pick-and-place) go in hardware/fab/ and ARE committed
+
+# ---------- OS / editors ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/

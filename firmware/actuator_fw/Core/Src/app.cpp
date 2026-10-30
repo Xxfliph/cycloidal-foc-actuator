@@ -1,12 +1,22 @@
+#include "tim.h"
 #include "app.h"
 #include "main.h"
 #include "usbd_cdc_if.h"
 #include <cstdio>
 
+
 void app_main(void)
 {
     uint32_t count = 0;
     char msg[64];
+
+    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
+    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
+// Duty = CCR / ARR. CRR is
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1062);   // ~25% duty
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 2125);   // 50% duty
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 3187);   // ~75% duty
 
     while (true)
     {

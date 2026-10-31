@@ -3,6 +3,7 @@
 #include "main.h"
 #include "usbd_cdc_if.h"
 #include <cstdio>
+#include "i2c.h"
 
 
 void app_main(void)
@@ -22,9 +23,16 @@ void app_main(void)
     {
         HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
 
-        int len = snprintf(msg, sizeof(msg), "hello %lu, tick=%lu\r\n", count, HAL_GetTick());
+        int len = snprintf(msg, sizeof(msg), "scan:");
+        for (uint8_t addr = 1; addr < 128; addr++)
+        {
+            if (HAL_I2C_IsDeviceReady(&hi2c1, static_cast<uint16_t>(addr << 1), 2, 2) == HAL_OK)
+            {
+                len += snprintf(msg + len, sizeof(msg) - len, " 0x%02X", addr);
+            }
+        }
+        len += snprintf(msg + len, sizeof(msg) - len, "\r\n");
         CDC_Transmit_FS(reinterpret_cast<uint8_t*>(msg), static_cast<uint16_t>(len));
-        count++;
 
         HAL_Delay(500);
     }

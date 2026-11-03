@@ -7,8 +7,8 @@
 #include "foc_controller.h"
 #include <cmath>
 
-FocController::FocController(float vbus, float vLimit)
-    : vbus_(vbus), vLimit_(vLimit)
+FocController::FocController(float vbus, float vLimit, uint8_t polePairs)
+    : vbus_(vbus), vLimit_(vLimit), offset_(0.0f), direction_(1), polePairs_(polePairs)
 {
 }
 
@@ -76,11 +76,12 @@ void FocController::computeDuties(float vd, float vq, float thetaE, float duty[3
 	vb+= vbus_*0.5f;
 	vc+= vbus_*0.5f;
 
-	//convert to duty cycles and clamp values
+	//convert to duty cycles
 	duty[0] = va/vbus_;
 	duty[1] = vb/vbus_;
 	duty[2] = vc/vbus_;
 
+	//clamp values
 	for (int i = 0; i < 3; i++) {
 		if (duty[i] > 1.0f) {
 			duty[i] = 1.0f;
@@ -89,4 +90,17 @@ void FocController::computeDuties(float vd, float vq, float thetaE, float duty[3
 			duty[i] = 0.0f;
 		}
 	}
+}
+
+void FocController::setCalibration(float offset, int8_t direction) {
+	offset_ = offset;
+	direction_ = direction;
+}
+
+float FocController::electricalAngle(float mechAngle) const {
+	float elecAngle = fmodf(mechAngle*static_cast<float>(polePairs_)*direction_ - offset_, TWO_PI);
+	if (elecAngle < 0.0f) {
+		elecAngle += TWO_PI;
+	}
+	return elecAngle;
 }

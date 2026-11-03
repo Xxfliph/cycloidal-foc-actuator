@@ -37,3 +37,60 @@ One entry per work session. Write what you did, what broke, and what you decided
 - Broke: sign error in inverse Park Vβ (would reverse rotation); caught by checking θe = 0
 - Broke: local `vbus` shadowed the member; member-name typos (vLimit vs vLimit_)
 - Broke: newlib-nano can't printf floats → printed value ×1000 as int (alternative: -u _printf_float)
+
+## 2026-11-02 - 2026-11-03: MT6701 Encoder - Encoder class, multi-turn, velocity
+
+### Raw I2C read
+- Angle = 14 bits across two registers: 0x03 = bits 13..6, 0x04 = bits 5..0 (in its upper 6 bits; low 2 bits ignored).
+  `count = (reg03 << 6) | (reg04 >> 2)` → 0..16383 per mechanical turn (~0.022°/count).
+- One `HAL_I2C_Mem_Read` of 2 bytes from 0x03 (register auto-increments), so both bytes come from the same
+  sample. Two separate reads could stitch old + new bytes (~64-count glitch → velocity spike).
+- HAL wants the 8-bit address form: 0x06 << 1 = 0x0C (R/W bit goes in bit 0). Plain 0x06 → HAL_ERROR.
+- Timeout 5 ms (not HAL_MAX_DELAY) so a stuck bus can't freeze the loop while PWM keeps running.
+
+### Encoder bench results (magnet by hand / taped, motor unpowered)
+- Magnet hand-held over chip side: ~50 counts jitter (~1.1° mech ≈ 12° electrical).
+- Magnet on back of board (PCB as spacer) or stuck to a header pin: ±1 count = sensor noise floor.
+  → Gap and centring matter a lot: design a fixed ~1–2 mm, centred magnet gap into the mount.
+- No magnet: random values (±~80 counts) but every read still HAL_OK.
+  → "Bus worked" ≠ "data valid". TODO: read MT6701 field-strength status later.
+- Turning: sawtooth 0 → 16383, wraps to 0. Screenshot: docs/img/<sawtooth>.png
+
+### Encoder class (firmware/actuator_fw/Core/{Inc,Src}/encoder.*)
+- `Encoder(I2C_HandleTypeDef* hi2c, uint8_t addr)`: takes the datasheet 7-bit address, shifts once in the
+  initializer list.
+- `update()`: one I2C read per call; updates state only on HAL_OK (keeps last good value on failure);
+  returns the HAL status. Getters are const and never touch the bus, so each loop reads once and every
+  user sees the same sample.
+- `getRawCount()`, `getAngle()` (rad, 0..2π), `getMultiTurnAngle()` (rad, unbounded),
+  `getRawVelocity()`, `getVelocity()` (filtered, rad/s).
+
+### Multi-turn (unwrap)
+- diff = new − prev (as int32_t); if diff > 8192 → −16384; if diff < −8192 → +16384; else unchanged.
+  Always assumes the shorter way round, so the shaft must move < half a turn between reads
+  (10 ms loop → max 50 rev/s; faster loop raises the limit). Threshold must be exactly half a turn.
+- totalCount_ (int32_t) accumulates corrected diffs. First good read seeds prev/total (no fake jump).
+- Verified: multi-turn angle climbs/falls smoothly across wraps, goes negative past start.
+
+### Timing: DWT cycle counter
+- Enabled once in app_main: `CoreDebug->DEMCR |= TRCENA`, `DWT->CTRL |= CYCCNTENA`.
+  Read `DWT->CYCCNT` (170 MHz, ~6 ns resolution, wraps every ~25 s; unsigned subtraction handles the wrap).
+- Measured loop period: ~1,870,000 cycles = 11.0 ms, not 10 ms (HAL_Delay adds a tick).
+  Assuming 10 ms would have made velocity ~10% wrong → always measure Δt.
+
+### Velocity
+- velocity = (unwrapped diff → rad) / Δt, Δt = Δcycles / SystemCoreClock (float). Guard Δcycles > 0
+  (avoids NaN, e.g. if the counter was never enabled).
+- Still test: raw velocity is exactly 0 / ±34 mrad/s = ±1 count per 11 ms ((2π/16384)/0.011 ≈ 34.9).
+  Matches prediction → angle conversion and Δt are correct.
+- No-magnet test: ±4000 mrad/s (≈ ±115 counts per sample) → velocity amplifies angle noise.
+  Faster loops make this worse (1 count at 1 kHz ≈ 380 mrad/s).
+
+### Velocity low-pass filter (EMA)
+- filt += α·(raw − filt), with α = Δt / (τ + Δt), τ = 20 ms. α recomputed each update from the measured Δt,
+  so the reaction time stays ~τ regardless of loop rate or missed reads.
+- At 11 ms: α ≈ 0.355. Still-test noise ±34 → ~±15 mrad/s; first step = 0.355 × 34 ≈ 12 and
+  decay ×0.645 per step, both match the plot.
+- Hand-spin test: filt is smoother, lags raw by ~1–2 samples (~20 ms), and shaves peaks
+  (4200 → 3800, −6900 → −5800). Trade-off: bigger τ = smoother but laggier.
+  Screenshot: docs/img/<raw_vs_filt>.png

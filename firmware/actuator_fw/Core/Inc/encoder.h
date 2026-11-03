@@ -16,6 +16,7 @@ public:
 	uint16_t getRawCount() const;
 	float getAngle() const;
 	float getMultiTurnAngle() const;
+	float getVelocity() const;
 
 private:
 	I2C_HandleTypeDef* hi2c_;
@@ -28,6 +29,9 @@ private:
 	static constexpr int32_t FULL_TURN = 16384;
 	static constexpr float COUNTS_PER_REV = 16384.0f;
 	static constexpr float TWO_PI = 6.2831853f;
+
+	uint32_t prevCycles_;
+	float velocity_;
 
 };
 

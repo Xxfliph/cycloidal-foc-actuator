@@ -26,7 +26,7 @@ void app_main(void)
 
 	Encoder myEncoder(&hi2c1,0x06);
 
-	char msg[64];
+	char msg[128];
 
 	int n = 0;
 
@@ -34,7 +34,7 @@ void app_main(void)
     {
     	int result = myEncoder.update();
     	if(result == HAL_OK) {
-			n = snprintf(msg, sizeof(msg), "count:%u mrad:%d multi:%d vel:%d\r\n", myEncoder.getRawCount(), static_cast<int>(myEncoder.getAngle()*1000.0f), static_cast<int>(myEncoder.getMultiTurnAngle()*1000.0f), static_cast<int>(myEncoder.getVelocity()*1000.0f));
+			n = snprintf(msg, sizeof(msg), "count:%u mrad:%d multi:%d raw:%d filt:%d\r\n", myEncoder.getRawCount(), static_cast<int>(myEncoder.getAngle()*1000.0f), static_cast<int>(myEncoder.getMultiTurnAngle()*1000.0f), static_cast<int>(myEncoder.getRawVelocity()*1000.0f), static_cast<int>(myEncoder.getVelocity()*1000.0f));
 			CDC_Transmit_FS(reinterpret_cast<uint8_t*>(msg), static_cast<uint16_t>(n));
     	}
     	else {

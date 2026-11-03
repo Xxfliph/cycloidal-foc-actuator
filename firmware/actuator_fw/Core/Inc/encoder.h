@@ -16,7 +16,9 @@ public:
 	uint16_t getRawCount() const;
 	float getAngle() const;
 	float getMultiTurnAngle() const;
+	float getRawVelocity() const;
 	float getVelocity() const;
+
 
 private:
 	I2C_HandleTypeDef* hi2c_;
@@ -31,7 +33,10 @@ private:
 	static constexpr float TWO_PI = 6.2831853f;
 
 	uint32_t prevCycles_;
-	float velocity_;
+	float rawVelocity_;
+	float filteredVelocity_;
+
+	static constexpr float VEL_FILTER_TAU = 0.02f;
 
 };
 

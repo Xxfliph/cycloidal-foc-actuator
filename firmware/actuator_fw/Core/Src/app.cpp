@@ -30,7 +30,7 @@ void app_main(void)
     {
     	int result = myEncoder.update();
     	if(result == HAL_OK) {
-			n = snprintf(msg, sizeof(msg), "count:%u\r\n", myEncoder.getRawCount());
+			n = snprintf(msg, sizeof(msg), "count:%u mrad:%d multi:%d\r\n", myEncoder.getRawCount(), static_cast<int>(myEncoder.getAngle()*1000.0f), static_cast<int>(myEncoder.getMultiTurnAngle()*1000.0f));
 			CDC_Transmit_FS(reinterpret_cast<uint8_t*>(msg), static_cast<uint16_t>(n));
     	}
     	else {

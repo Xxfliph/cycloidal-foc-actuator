@@ -8,7 +8,7 @@
 #include <cmath>
 
 FocController::FocController(float vbus, float vLimit, uint8_t polePairs)
-    : vbus_(vbus), vLimit_(vLimit), offset_(0.0f), direction_(1), polePairs_(polePairs)
+    : vbus_(vbus), vLimit_(vLimit),  polePairs_(polePairs), offset_(0.0f), direction_(1)
 {
 }
 

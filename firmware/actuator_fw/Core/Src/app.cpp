@@ -9,9 +9,9 @@
 #include "encoder.h"
 
 
-
 void app_main(void)
 {
+	//declarations and object creation
 	FocController myFocController(12.0f, 6.0f, 11);
 	MotorDriver myMotorDriver(&htim1, DRV_EN_GPIO_Port, DRV_EN_Pin);
 
@@ -22,17 +22,18 @@ void app_main(void)
 	DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
 
 	Encoder myEncoder(&hi2c1, 0x06);
-
-	char msg[128];
-	int n = 0;
 	float dutyArray[3];
 
-	static constexpr float HOLD_VD = 2.5f;
+	//print stuff
+	char msg[128];
+	int n = 0;
 
+
+	//calibration code
+	static constexpr float HOLD_VD = 2.5f;
 	myFocController.computeDuties(HOLD_VD, 0.0f, 0.0f, dutyArray);
 	myMotorDriver.setDuty(dutyArray);
 	HAL_Delay(1000);
-
 	float calOffset = 0.0f;
 	if (myEncoder.update() == HAL_OK) {
 		calOffset = myFocController.electricalAngle(myEncoder.getAngle());
@@ -47,10 +48,9 @@ void app_main(void)
 	}
 	myFocController.setCalibration(calOffset, 1);
 
-
+	//variable declarations for FOC control
 	uint8_t failedReads = 0;
 	uint8_t printCounter = 0;
-
 	static constexpr float VQ = 1.0f;
 
 	while (true)

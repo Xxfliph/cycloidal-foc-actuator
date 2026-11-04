@@ -5,10 +5,12 @@
  *      Author: jonny
  */
 
-#include <cstdint>
+
 
 #ifndef INC_FOC_CONTROLLER_H_
 #define INC_FOC_CONTROLLER_H_
+
+#include <cstdint>
 
 class FocController {
 public:
@@ -22,8 +24,8 @@ private:
 	float vLimit_;
 	static constexpr float SQRT3_OVER_2 = 0.8660254f;
 	uint8_t polePairs_;
-	float offset_;
-	int8_t direction_;
+	float offset_ = 0.0f;
+	int8_t direction_ = 1;
 	static constexpr float TWO_PI = 6.2831853f;
 };
 

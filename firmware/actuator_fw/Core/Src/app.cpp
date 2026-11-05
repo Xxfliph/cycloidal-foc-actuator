@@ -13,9 +13,9 @@
 void app_main(void)
 {
 	//declarations and object creation
-	FocController myFocController(12.0f, 6.0f, 11);
+	FocController myFocController(15.0f, 3.0f, 11);
 	MotorDriver myMotorDriver(&htim1, DRV_EN_GPIO_Port, DRV_EN_Pin);
-	PIController myPIController(0.1f, 0.0f, 6.0f);
+	PIController myPIController(0.3f, 3.0f, 2.0f);
 	Encoder myEncoder(&hi2c1, 0x06);
 
 	myMotorDriver.start();
@@ -58,9 +58,9 @@ void app_main(void)
 	uint8_t failedReads = 0;
 	uint8_t printCounter = 0;
 	static constexpr float VQ = 1.0f;
-	static constexpr bool USE_VELOCITY_LOOP = false;
+	static constexpr bool USE_VELOCITY_LOOP = true;
 	static constexpr float STEP_VEL = 10.0f;
-	static constexpr uint32_t STEP_DELAY_MS = 1000;
+	static constexpr uint32_t STEP_DELAY_MS = 3000;
 	float vq = 0.0f;
 
 	//timer variable declaration
@@ -111,7 +111,7 @@ void app_main(void)
 			}
 		}
 		printCounter++;
-		if (printCounter > 50) {
+		if (printCounter > 150) {
 			printCounter = 0;
 			n = snprintf(msg, sizeof(msg), "target:%d vel:%d vq:%d\r\n",
 					static_cast<int>(target*1000.0f),

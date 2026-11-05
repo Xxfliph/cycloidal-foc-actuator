@@ -138,7 +138,7 @@ One entry per work session. Write what you did, what broke, and what you decided
   MT6701 centred under it at ~1.5–2 mm. Quick bracket/tape rig for now;
   final encoder placement comes with the custom PCB.
 
-### PIController (pure math, PC-tested)
+### PIController
 - `PIController(kp, ki, outLimit)`, `update(error, dt)`, `reset()`.
   Caller computes the error, so it works for the velocity and position loops.
 - update(): if dt > 0 → integral += Ki·e·dt, clamped to ±outLimit;
@@ -146,3 +146,38 @@ One entry per work session. Write what you did, what broke, and what you decided
 - Anti-windup: clamp the integral itself, not just the output.
   Otherwise a stuck rotor winds it up far past the limit and the motor stays at full vq after release.
 - if dt ≤ 0 → skip integration only. reset() → integral = 0 (call after calibration / any disable).
+
+## 2026-11-04 - 2026-11-05: Velocity loop, closed-loop FOC on hardware, tuning
+
+### Velocity loop code
+- Velocity PI runs every ~1 ms; FOC runs every pass with the latest vq.
+  Timing: lap timer on DWT->CYCCNT (elapsed = now − last, uint32 handles the ~25 s wrap);
+  dt = elapsed / 170e6 (measured, not assumed).
+- error = target − getVelocity(); vq = PI.update(error, dt). vq and target declared
+  before the loop so they persist between passes.
+- Step command: target 0 until STEP_DELAY_MS after loop start (HAL_GetTick), then 10 rad/s.
+- USE_VELOCITY_LOOP switch: false = constant VQ (FOC test), true = PI sets vq.
+
+### Encoder placement test
+- Test app.cpp: per 50 reads prints count, spread (still noise), max jump, direction flips, I2C errors.
+- Still: spread 0. Full turn: smooth count, no jump spikes, err 0.
+- Flips only when nudging by hand (cogging snap-back); continuous spin → 0 flips. Passes.
+
+### Closed-loop voltage-mode FOC (first hardware test)
+- VQ = +1 V: spins by itself at ~17.6 rad/s. VQ = −1 V: ~−17.9 rad/s. Symmetric.
+- Slow ±1 rad/s ripple, ~once per revolution (mechanical/placement, not firmware).
+- Mistake: vLimit 2 V clipped calibration's vd 2.5 V (computeDuties clamps vd too).
+  Fix: FocController vLimit 3 V, PI limit 2 V as the safety cap.
+- "cal failed" after an NRST: MT6701 I2C bus stuck (encoder stays powered through NRST).
+  Fix: full power cycle (unplug motor power + STM32 USB).
+
+### Velocity loop tuning (step 0 → 10 rad/s)
+| Kp  | Ki | Peak | Settles     | Notes                                    |
+|-----|----|------|-------------|------------------------------------------|
+| 0.1 | 0  | 6.7  | 5.7         | vq 0.42 V = Kp·e (P-only balance point)  |
+| 0.2 | 0  | 9.4  | 7.5         | vq hits 2 V limit at the step            |
+| 0.4 | 0  | 11.8 | 8.6         | rings, vq goes negative (braking)        |
+| 0.3 | 3  | 11.6 | 10.0 ± 0.35 | chosen: ~16% overshoot, on target ~0.2 s |
+- P-only overshoot comes from lag (EMA τ 20 ms vs ~25 ms rise) → limits Kp.
+- Integral learns the steady push: vq ~0.6–0.7 V at 10 rad/s, P ≈ 0.
+- Pinch test: speed dips, recovers to 10 while still pinched.

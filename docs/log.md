@@ -181,3 +181,31 @@ One entry per work session. Write what you did, what broke, and what you decided
 - P-only overshoot comes from lag (EMA τ 20 ms vs ~25 ms rise) → limits Kp.
 - Integral learns the steady push: vq ~0.6–0.7 V at 10 rad/s, P ≈ 0.
 - Pinch test: speed dips, recovers to 10 while still pinched.
+
+## 2026-11-04 - 2026-11-06: PCB prep — DRV8316 datasheet, requirements, parts, pin plan
+
+### DRV8316 datasheet
+- Went through pins + typical application, PWM modes, current sensing, variants, thermal pad.
+- Learned along the way: FETs and half-bridges, why the high side needs a charge pump,
+  decoupling vs bulk caps, buck vs LDO, pull-ups, open-drain, floating inputs, zener clamps.
+
+### Key decisions
+- 3.3 V from the DRV8316's buck at its default 3.3 V, straight to the STM32 (47 µH inductor, ~72 mA budget).
+- nSLEEP woken from VM (10 kΩ + 3.3 V zener), not connected to the STM32 → firmware can't cut its own power.
+- 3x PWM mode: TIM1 CH1–3 → INHx (same as dev rig), all INLx on one enable GPIO.
+- DRV8316CR (newer "C", better current-sense amps) + STM32G431CBT6 (LQFP-48, hand-reworkable).
+- MT6701 goes on the main board, centred over the magnet; board screws to the motor's 4 stationary back-face holes.
+- JLCPCB assembles the SMD parts (thermal pad can't be done with an iron); quote PCBWay too (student 50%).
+
+### Mistakes caught (datasheet re-check)
+- nSLEEP pull-up to AVDD wouldn't work: AVDD is off while the chip sleeps → chicken-and-egg. Fix: from VM + zener.
+- nFAULT pull-up to the buck rail: chip can enter test mode if the pull-up supply is < 2.2 V at power-up. Fix: to AVDD.
+- VREF from the buck rail: VREF must not exceed AVDD. Fix: VREF → AVDD.
+- Current-sense gain: lowest gain (0.15 V/A) is too coarse for ~1 A → firmware setting, likely 0.6 V/A.
+- Bulk cap: small electrolytics can't take the PWM ripple current → added 2× 10 µF ceramics.
+
+### Parts + pin plan
+- All parts picked with LCSC numbers (chips, power, input protection, crystal, connectors); passives as Basic parts at BOM time.
+- CubeMX pin plan (`hardware/pinplan/pinplan.ioc`): CAN on PB8/PB9 + USB on PA11/PA12 both fit.
+  BOOT0 clash on PB8 solved with option bytes (nSWBOOT0 = 0, nBOOT0 = 1), same as ST's B-G431B-ESC1.
+- Clocks same as dev rig (8 MHz HSE → 170 MHz), USB from HSI48 + CRS, FDCAN from PCLK1.

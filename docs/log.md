@@ -209,3 +209,34 @@ One entry per work session. Write what you did, what broke, and what you decided
 - CubeMX pin plan (`hardware/pinplan/pinplan.ioc`): CAN on PB8/PB9 + USB on PA11/PA12 both fit.
   BOOT0 clash on PB8 solved with option bytes (nSWBOOT0 = 0, nBOOT0 = 1), same as ST's B-G431B-ESC1.
 - Clocks same as dev rig (8 MHz HSE → 170 MHz), USB from HSI48 + CRS, FDCAN from PCLK1.
+
+## 2026-11-06 - 2026-11-07: Motor measurements, board outline, Altium project
+
+### Motor back-face measurements (calipers)
+- Back face Ø40 mm. 4 stationary mounting holes, **M2.5**, on a **24.0 × 24.0 mm square**
+  (34.0 mm diagonal; centre-to-centre = average of near-edge and far-edge readings). ~6.3 mm usable thread.
+- Magnet 0.1 mm sticking out. Everything else flush, except the motor wires leaving the recessed pad pocket
+  (pocket sits midway between two holes).
+
+### Mounting decision: low mount, MT6701 on top
+- Board sits 1 mm above the motor face on nylon M2.5 washers (no standoffs), M2.5 × 8 mm stainless/nylon screws.
+- MT6701 on the top side, centred over the magnet. Magnet → die ≈ 1 + 1.6 − 0.1 + ~0.75 ≈ 3.25 mm.
+  The passing 2.8 mm paper test had the die at ~3.55 mm (chip faced the magnet), so the board is closer.
+- Why a gap at all: the magnet sleeve spins, through-hole legs poke out the bottom, and the motor face is metal.
+- Rules: no through-hole legs inside the Ø40 motor circle; motor wires go up through a window in the board
+  (shortened), never out over the rim under the board.
+- Board Ø50 mm: Ø40 is too tight for single-sided parts + routing, and the overhang ring holds the
+  through-hole connectors. 50 mm = largest round board inside the planned ~60 mm housing → re-check after the cycloid CAD.
+
+### Board outline (Onshape)
+- Built on a downloaded GM3506 model, checked against the caliper numbers.
+- Ø50 board, 4 holes on the 24 × 24 mm square, ~8 × 13 mm window over the motor pads, MT6701 box at the centre.
+- Exported `hardware/outline/board-outline.dxf` (outline + holes + window) and `board-on-motor.step` (fit check later).
+
+### Altium project
+- `hardware/altium/actuator-driver/` (local project): PrjPcb + SchDoc + PcbDoc.
+- Imported the DXF, set the origin at the board centre (outline arc reads centre 0,0, radius 25 mm),
+  defined the board shape from the circle and the window as a board cutout.
+- Mounting holes: 4 unplated drilled pads MH1–MH4, 2.7 mm, at (±12.021, ±12.021) mm.
+- Mistakes: origin was ~0.4 mm off the centre after import → fixed with arc-centre snapping and checked by number.
+  First made the 4 holes as routed cutouts → redone as drilled holes (standard, more accurate).

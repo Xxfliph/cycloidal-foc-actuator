@@ -240,3 +240,30 @@ One entry per work session. Write what you did, what broke, and what you decided
 - Mounting holes: 4 unplated drilled pads MH1–MH4, 2.7 mm, at (±12.021, ±12.021) mm.
 - Mistakes: origin was ~0.4 mm off the centre after import → fixed with arc-centre snapping and checked by number.
   First made the 4 holes as routed cutouts → redone as drilled holes (standard, more accurate).
+
+## 2026-11-07 - 2026-11-08: Part libraries
+
+### Setup
+- Project libraries `actuator-driver.SchLib` + `.PcbLib`. Downloaded parts (Ultra Librarian, Altium Manufacturer
+  Part Search, EasyEDA export) go in a downloads folder, get checked, then copied in.
+- Every footprint checked against the maker's land pattern. Solder mask expansion 0.05 mm on every pad.
+
+### Chips
+- DRV8316C: Ultra Librarian footprint was wrong (pads too long, thermal pad too big, 0.14 mm gap to signal pads).
+  Fixed to TI's pattern: 0.25 × 0.6 mm pads, 3.7 × 5.7 mm thermal pad, 0.25 mm gap, TI's 12 paste windows (69%).
+- STM32G431 (ST's recommended LQFP-48), SN65HVD230 (TI D0008A), MT6701 (same SOIC-8 footprint as the SN65).
+
+### Discretes and connectors
+- AO3401A (gate limit ±12 V, so the 10 V zener clamp is fine), SMBJ18A (pin 1 = cathode = band).
+- Drew by hand from datasheets: BZT52 zeners (SOD-123; Altium only had SOD-323), PTC 1812, 8 MHz crystal (2-pad),
+  47 µH inductor, SWD header, test pad, solder jumper, motor pads (2.0 × 3.0 mm, 3 mm pitch).
+- EasyEDA exports (checked): 47 µF cap (pad 1 = +), JST GH CAN connector.
+- Generic RES/CAP/FB parts (Comment = value): 0603 R/C share one footprint, plus CAP_0805 and CAP_1206. LED_0603 (pad 1 = cathode).
+- Swapped the XT30 for a 2-pin 3.5 mm screw terminal. Power comes from the PD trigger (15 V) through an 18 AWG lead with the 2 A fuse.
+
+### Other
+- Accidentally cut a motor wire; 10+ cm left, so re-strip and reconnect.
+- Set up the Salitronic EDA agent: Claude can read/check Altium directly. Both libraries pass Altium's rule checks
+  (only duplicate outline lines on the DRV8316's Mechanical 13 layer, harmless).
+- Before layout: board rule Mask → Solder Mask Expansion = 0.05 mm (the AO3401A uses the rule).
+- Next: schematic.

@@ -267,3 +267,35 @@ One entry per work session. Write what you did, what broke, and what you decided
   (only duplicate outline lines on the DRV8316's Mechanical 13 layer, harmless).
 - Before layout: board rule Mask → Solder Mask Expansion = 0.05 mm (the AO3401A uses the rule).
 - Next: schematic.
+
+## 2026-11-08 - 2026-11-09: Datasheet check + schematic
+
+### Datasheet check (before drawing)
+- Re-checked every part and circuit choice against the maker's datasheet; page numbers are in `hardware/requirements.md`.
+  The STM32 (48 pins) and DRV8316 (41 pins) symbols match the datasheets.
+- Fixes:
+  - nFAULT moved PB2 → PB11. PB2 only tolerates 3.6 V, but nFAULT is pulled up to AVDD, which can sit above the 3.3 V rail.
+    PB11 is 5 V-tolerant. Updated `pinplan.ioc` (EXTI11, falling edge) and checked it in CubeMX.
+  - VBAT → 3.3 V (it was left unconnected; the datasheet says it must be connected).
+  - Crystal caps 30 → 20 pF (worked out from the crystal's load capacitance).
+  - Current-sense filter cap 2.2 nF → 220 pF; with the 330 Ω this is fast enough for 20 kHz PWM.
+  - AVDD cap rated ≥ 16 V, because a ceramic cap loses capacitance under voltage.
+- Corrections to my notes: the 47 µH inductor must handle more than the 900 mA buck current limit (it's rated 1.1 A, OK);
+  the MT6701 needs 32 ms after power-up before it reads correctly; the DRV8316 SDO pin is push-pull after reset.
+- Library cleanup: removed junk parameters, set maker + LCSC numbers on the zeners and the TVS, named the 47 µF cap pins +/-.
+
+### Schematic (6 sheets, global net names)
+1. Power input: screw terminal → PTC → P-FET reverse protection → TVS → bulk caps → VM; VM sense divider ÷11.
+2. DRV8316: buck to 3.3 V, charge pump caps, nSLEEP from VM (10k + 3.3 V zener), nFAULT 5.1k to AVDD,
+   VREF to AVDD, PGND and GND joined by a 0 Ω net-tie (R4).
+3. STM32: decoupling caps per the datasheet, ferrite bead to VDDA, 8 MHz crystal, 330 Ω + 220 pF filter on each current-sense
+   signal (SOx → SOx_ADC), status LED (PB10), power LED.
+4. Encoder: MT6701 over SSI (SPI2, receive only).
+5. CAN: SN65HVD230, 120 Ω terminator behind a solder jumper (open by default).
+6. Connectors: 2× JST GH CAN, SWD header, motor pads, test pads.
+- Mistakes caught while drawing (worth remembering): reversed diode, PGND/GND mixed up, caps accidentally in series,
+  power ports used for signals (use net labels), a power port left a cap pin floating, a shorted crystal, a filter that was
+  bypassed by a net name, SOA/SOC swapped.
+- Claude checked the full netlist (241 pin connections) against the requirements, and it matches.
+- Compile is clean. No ERC on: USB_DM/DP (USB-C not decided yet), CAN_RX/DRV_FAULT/DRV_MISO (Altium flags IO vs Output,
+  which is fine here), and nSLEEP (it's driven by a resistor, not a chip pin).

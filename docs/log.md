@@ -299,3 +299,72 @@ One entry per work session. Write what you did, what broke, and what you decided
 - Claude checked the full netlist (241 pin connections) against the requirements, and it matches.
 - Compile is clean. No ERC on: USB_DM/DP (USB-C not decided yet), CAN_RX/DRV_FAULT/DRV_MISO (Altium flags IO vs Output,
   which is fine here), and nSLEEP (it's driven by a resistor, not a chip pin).
+
+## 2026-11-09 - 2026-11-10: Placement + placement review
+
+### Getting the parts onto the board
+- Design → Update PCB Document. First try did nothing: Validate only checks the changes, Execute is what adds them.
+- Rooms off. Parts pulled in one sheet at a time with Cross Select Mode + Tools → Component Placement → Arrange Within Rectangle.
+
+### Placement
+- All 69 parts on the top side; board origin = centre, motor-wire window at 12 o'clock.
+- U3 (MT6701) at the exact centre over the magnet; U1 (DRV8316) to its right with the OUT pins facing the motor pads
+  (J5 pads in the same OUTC/OUTB/OUTA order as U1, no crossings), U2 (STM32) to its left, CAN at the bottom,
+  power input lower right (J1 → F1 → Q1 → TVS → 47 µF → 10 µF next to the VM caps).
+- Rules used: through-hole pins ≥ 21 mm from centre (motor face is Ø40, legs clipped flush), copper ≥ 0.3 mm from the edge,
+  nothing near the mounting holes.
+- JST GH side-entry: the small signal pads are at the back and the opening is on the big-tab side (JST datasheet).
+  J2/J3 were facing inward at first → rotated 180°.
+
+### Placement review (Claude, independent; full write-up in the project doc `pcb-placement-review.md`)
+- Mounting-hole keepouts were drawn inside the holes (r 1.2 < hole r 1.35), so they protected nothing. Measured the screw
+  heads (Ø4.7) → keepouts now r 2.8. Moved Q1 (its VM pad was under the screw head), TP1 and J3 off the holes.
+- DRV8316 pins 5–8 (SW, CPL, CPH, CP) couldn't all be routed on top: C13 sat right in front of SW. Changed C13 to 0402
+  (new CAP_0402 footprint + symbol, LCSC C307339), lined it up with pin 7, moved C11 onto pin 8's line and shifted the
+  VM caps and R4 up. SW now has a straight path to the inductor.
+- AVDD cap C12 was 6 mm from its pin (sitting next to the VREF cap instead) → moved next to pins 25/26.
+- R5/R7 were in the path of the three motor-phase traces → moved next to the DRV8316 pins they connect to.
+- Rotated U3 180° so its SPI pins face the STM32 (no crossing). Only changes the zero offset, which calibration measures.
+- Crystal rotated 90° so OSC_IN/OSC_OUT don't cross; R9 in line with pin 6.
+- J1 pulled 0.65 mm in (overhang 1.6 → ~1 mm), small VDDA caps swapped to be nearest the pins.
+- Left as is: C17 (no room between the hole and the STM32), current-sense resistors (routable as is).
+- Re-check of the whole board is clean (pad gaps, outlines, holes, edge).
+
+### Other
+- Altium caches libraries: the new footprint showed "Footprint Not Found" until I reopened the project.
+- From the PCB, schematic changes come in with Design → Import Changes From <project>, NOT "Update Schematics".
+- The ECO also listed 4 "Unavailable footprint" lines (Q1, U2, U3/U4, D2): same footprints, accepted, nothing moved.
+- Housing notes: J1/J2/J3 need slots in the wall; rear cover needs ≥ 9 mm clear above the board
+  (J1 8.8 mm, SWD header 8.5 mm, 47 µF 7.7 mm).
+
+## 2026-11-10 - 2026-11-11: Stackup, rules, pours + routing (sections 1–5)
+
+### Stackup, rules, ground pours
+- 4 layers, JLC04161H-3313 (1.6 mm): Top / L2 GND / L3 signals + power / Bottom. Thin 0.1 mm prepreg so Top sits close to the L2 ground.
+- Net classes: PWR_RAIL (VM, PGND, VIN), MOTOR_OUT (OUTA–C), SW, LOGIC_PWR (3V3, AVDD, VDDA). Clearance 0.15 general,
+  0.2 for power nets and vias, 0.35 around the hand-soldered J1/J4. Vias tented on both sides (the bottom faces the motor).
+- GND pours on L2 + Bottom with a PGND island under the power section (input, VM caps, motor-phase corridor),
+  joined to GND only at the R4 net-tie. Remove Dead Copper is off on the PGND pours until the PGND vias exist.
+- Mounting-hole keepouts on every copper layer; pin-1 dot added on U1.
+
+### Routing
+- DRV8316 corner: charge-pump caps and SW on Top with no vias (C13 is 0402 so CPL can pass under it and CP over it).
+  The buck feedback (FB) moved to the right side to free the space under the current-sense pins.
+- VM: a fill joins VM pins 9–11 to the first cap. The two cap columns are separated by a PGND column, so VM crosses
+  between them on L3 through VM vias. 15 thermal vias in the DRV8316 pad.
+- Motor phases: 0.5 mm, not the planned 0.8 (0.8 didn't fit between the pin pairs, the PGND vias, the screw-head ring
+  and the PGND island edge). 0.5 mm carries ~2 A for ~10 °C rise; the motor needs ~1 A. The top bend of OUTA has to
+  stay ≥ 3.25 mm from MH1's centre (keepout ring + power clearance); the first version failed DRC by 0.05 mm.
+- Power input routed at 1.0 mm with PGND vias. Crystal on Top only, no vias, nothing else nearby.
+- Current sense: SOA/SOB/SOC on L3 to the 330 Ω resistors at the left edge. The filtered nodes (R → 220 pF → ADC)
+  run on Top through the 0.57 mm gaps between the resistor/cap rows (a via never fits in a gap, a 0.15 mm trace does).
+  The cap grounds had to become vias in the middle of the pads (via-in-pad); decide at ordering whether to pay for
+  plugged vias.
+- Last DRC: 0 clearance/short errors; 90 nets left to route; silkscreen items unchanged.
+
+### Lessons
+- Repour after adding vias: old pours run straight through new vias and DRC reports them as shorts.
+- A via that only touches a pad edge isn't connected — draw a trace.
+- Keepout rings are checked with the normal clearance rules, so power traces need keepout + 0.2 mm.
+- Check where the neighbouring vias are before picking a via spot (one suggested spot landed on another via).
+- Running a thick trace straight through the middle of an inner layer walls it off for every signal that has to cross.

@@ -30,6 +30,7 @@ Project Outputs for */
 *.LOG
 *.ERR
 Status Report.Txt
+*.Cam
 # Final fab outputs (zipped Gerbers, BOM, pick-and-place) go in hardware/fab/ and ARE committed
 
 # ---------- OS / editors ----------

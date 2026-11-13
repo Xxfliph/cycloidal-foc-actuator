@@ -12,7 +12,7 @@ Item,Designator,Qty,Manufacturer,Manufacturer Part Number,Description,Package
 11,D1,1,Changjing,BZT52C10,Zener 10V,SOD-123
 12,D2,1,RUILON,SMBJ18A,TVS 18V unidirectional,SMB
 13,D3,1,MDD,BZT52C3V3,Zener 3.3V,SOD-123
-14,"D4,D5",2,Hubei KENTO,KT-0603G,LED green,0603
+14,"D4,D5",2,Hubei KENTO,KT-0603YG,LED yellow-green,0603
 15,F1,1,RUILON,SMD1812P150TF/24,PTC 1.5A hold 24V,1812
 16,FB1,1,Sunlord,GZ1608D601TF,Ferrite 600R@100MHz,0603
 17,J2,1,JST,SM04B-GHS-TB(LF)(SN),GH 4-pin SMD right angle,SMD

@@ -368,3 +368,126 @@ One entry per work session. Write what you did, what broke, and what you decided
 - Keepout rings are checked with the normal clearance rules, so power traces need keepout + 0.2 mm.
 - Check where the neighbouring vias are before picking a via spot (one suggested spot landed on another via).
 - Running a thick trace straight through the middle of an inner layer walls it off for every signal that has to cross.
+
+## 2026-11-11 - 2026-11-13: Routing finished (sections 6–8), fab outputs, review, JLC order placed
+
+### Routing
+- DRV SPI, INH/PHASE_EN/DRV_OFF/nFAULT and encoder SPI routed, mostly on L3 with short Top fan-outs.
+- CANH/CANL routed as a 0.2 mm pair. Impedance control isn't needed on ~1 cm of trace.
+- SWD runs ~10 cm around the board on L3. (Later check: it crosses the PGND islands, see "GND / PGND split check".)
+- LEDs and UART routed. Every STM32 GND pin gets its own short via to the ground plane.
+- 3V3 had a ratsnest line between two islands. There's only one 3V3 source (the DRV8316 buck, L1 → C15),
+  so the two islands had to be joined.
+- 7 GND vias were shorting L3 traces (INHB, 3V3, SOA, VM, UART_TX), because vias go through every layer.
+  Moved them next to C12/C19/C14/C30/C31/D3/U4 pin 2.
+- SO vias at x −22.25 needed Top stubs to the resistor inputs. They aren't dead ends.
+
+### Pours, stitching, Remove Dead Copper
+- GND stitching vias added around the board, none under the crystal.
+- Remove Dead Copper stays OFF on the PGND pours. The island is made of 9 overlapping rectangles, each
+  rectangle is judged on its own, and turning it on deleted the whole island. The merged copper is one
+  piece with plenty of PGND vias, so nothing is actually floating.
+
+### DRC and board sweep (EDA tool, beyond DRC)
+- 0 unrouted, 0 shorts, 0 clearance/width/via errors. Schematic vs PCB matches (69/69). ERC 0.
+- Accepted leftovers (30 after the OUTB fill): silk-to-mask (footprint outlines on pads), 1 silk-to-silk,
+  board-outline, net antennae (thermal-pad GND vias).
+- Silkscreen 1 mm height / 0.15 mm stroke; small passives' designators hidden where they sat on pads.
+  J1 overhangs the board edge by ~0.96 mm on purpose (connector lip).
+- Netlist: no floating pins; the 18 single-pin nets are all intentional (NC pins, spare GPIO, MT6701 OUT/PUSH,
+  SN65 Vref, USB not fitted, J2/J3 pin 1). Every pour is one piece per layer.
+- Component Clearance rule wasn't in the DRC → enabled: 0. The placement-audit overlaps (R3/J4, F1/J1,
+  U4/J3) were bounding-box false alarms; 3D view agrees.
+- Real short found: a UART_TX via sat inside the GND pours on L2/Bottom (pours not redone after the via was
+  added). Repour All fixed it. The first Gerbers would have shipped with UART_TX shorted to GND.
+
+### Fab outputs (hardware/fab/)
+- Gerbers in mm 4:4, 11 layers, board centre = (0,0) in every file, drill files line up. NC drill mm 4:4,
+  plated / non-plated separate. Re-exported after every save.
+- actuator-driver_gerbers.zip (Gerbers + drill), actuator-driver_BOM_JLC.csv (LCSC numbers),
+  actuator-driver_CPL_JLC.csv (Altium pick-and-place, mm from board centre), actuator-driver_BOM_PCBWay.csv.
+- Small-part picks: all 100 nF = 50 V (C14663, the VM caps need it), 1 µF = C15849 (50 V X5R), 220 pF filter
+  = C1603 (X7R, not C0G — free Basic part, fine at 2 MHz cutoff), 20 pF C0G = C1648, ferrite GZ1608D601TF
+  (C1002, 200 mA), resistors UNI-ROYAL 0603.
+- Stock: LED C72043 out of stock → final pick KT-0603YG (C2289). J2/J3 short by one → J3 not assembled
+  (J2/J3 are in parallel; hand-solder J3 later for daisy-chaining). Assemble 2 boards, not 5.
+
+### Pre-order review (fresh eyes)
+- Checked against datasheets: power path, polarity of every diode/LED/electrolytic, pin 1 of every IC, U1 footprint
+  vs TI's land pattern, MT6701 / SN65HVD230 / STM32 pinouts.
+- Scanned the actual Gerbers for every one of the 249 pads: copper, mask opening, paste, gaps, slivers, annular ring.
+- Similar projects (MicroSpora DRV8316 + STM32G431 thread and other open-source FOC boards): every hardware problem
+  they hit is already handled here — DRVOFF pull-up, buck feeds 3.3 V direct (no diode/LDO), BOOT0/PB8 via option
+  bytes, crystal series resistor, separate SPI buses, SWD header, nSLEEP wake, thermal vias.
+
+### Fixes before ordering
+- Q1 (AO3401A) and C13 had NO solder-mask openings: their pads were on mask "from rule", which covered them.
+  Set to manual 0.05 mm expansion. Found from JLC's preview showing no Q1 pads; the first scans only checked
+  copper and drill, which is why it was missed.
+- Closed a 0.04 mm copper sliver at U1 pin 16 with a small Top fill (OUTB).
+- PCBWay's audit found a 0.05 mm gap between two 1 mm PGND traces on L3 (left of C1). Same net, so DRC ignored
+  it, but a fab can't etch it. Deleted the redundant short trace (its vias stay connected through the PGND
+  island on L2/Bottom), repoured.
+- Final vias: 81 small vias at 0.3 mm hole / 0.45 mm pad (ring 0.075). Avoids JLC's small-via + 4-wire Kelvin
+  test fees (~$33.5). Annular ring rule set to 0.07 (exactly-at-limit values were flagged by rounding).
+
+### Second opinion (another AI, given the Gerbers/BOM/CPL)
+- Its own pad-by-pad Gerber check agreed: every pad has copper, mask and paste.
+- Its two "critical" findings were wrong: MT6701 MODE high = I2C/SSI (the dev-rig breakout has MODE at VDD and runs
+  I2C), and the SMBJ18A complaint came from the handoff saying 12–24 V. The design is 12–15 V.
+- Everything else was already known or harmless (BOOT0 via option bytes, J3 not assembled on purpose, L2 and
+  Bottom both GND pours, 0.075 mm via ring OK with epoxy-filled vias).
+
+### GND / PGND split check
+- Checked every L3 and Top signal trace against the 9 PGND islands. Only SWDIO and SWCLK cross the split.
+  All motor-control signals (DRV SPI, INHx, PHASE_EN, SOx, encoder SPI, CAN, UART) are over solid GND.
+- Accepted for rev 1: if SWD is flaky, lower the ST-Link clock (≤ 1 MHz); worst case, solder wires straight to
+  the PA13/PA14 legs.
+
+### Quotes and fab choice
+- PCBWay (4 layers, S1000H TG150, 5/5 mil, 0.3 mm min hole, HASL lead-free): its human audit caught the L3 gap.
+  Student program = 50% of board + assembly labour only (not parts, shipping, duties) and needs "PCBWay" on the
+  silkscreen → not used. Chose JLC (only a bit more expensive, faster).
+- JLC: the 3313 stackup doesn't allow Economic assembly → default stackup is fine (no impedance-controlled traces).
+  Customs description: DIY Hobby Circuit Board (HS 902300).
+- Placement preview: all ICs (U1–U4) rotated 90° CW and Q1 180° by hand to match the pin-1 dots and pads.
+  Diode polarity checked against pad nets: D1 cathode on VM pad (top), D2 cathode on VM pad (left),
+  D3 cathode on nSLEEP pad (right), D4/D5 cathode on GND pad (left); Q1 pin 1 = gate.
+
+### JLC order (W2026111309131766), paid Nov 13, In Production
+- PCB: 5 pcs, 4-layer, 1.6 mm, ENIG, Epoxy Filled & Capped vias (13 small pads have via-in-pad, incl. the
+  current-sense caps), flying probe, JLC mark removed. PCBA: Economic, top side, 2 assembled, nitrogen reflow,
+  assembly remark for polarity.
+- Review Before Payment; approved in ~3 h (PCBA review takes longer than PCB).
+- Paid US$139.17 (boards $124.17 + DHL $15) after the shipping coupon and JLCONE discount; about C$185.
+  Expect Canadian tax (~C$25–35) from DHL before delivery.
+- Still to do: confirm the production-file and parts-placement previews when JLC sends them.
+
+### Rev 2 list
+- Route SWD over solid GND (avoid the PGND islands).
+- Set the AO3401A and CAP_0402 library footprints to manual 0.05 mm mask so the Q1/C13 fault can't come back.
+- Crystal load caps: 20 pF gives ~14 pF effective vs the crystal's 20 pF → 30 pF would be closer.
+- Optional: silkscreen labels (+/− J1, A/B/C J5, CAN, SWD, name/version), VM stub to the via at 0.4 mm,
+  C2/C3 PGND stubs at 0.5 mm or a second via.
+
+### Before bring-up
+- Buy: CP2102 or CH340 USB-serial adapter (3.3 V), JST GH 4-pin pre-crimped cables (check pin order vs the CANable).
+- Board runs on 12–15 V only (TVS starts conducting ~20 V).
+- First power-up: 12 V, 50 mA limit, no motor; check 3.3 V. Then set option bytes nSWBOOT0 = 0, nBOOT0 = 1.
+- Firmware: BUCK_PS_DIS = 1 first; NEVER set the DRV8316 buck to 5 V (SimpleFOC examples do; it feeds the
+  STM32 here); read back registers after writing (a constructor flag didn't set PWM mode in MicroSpora);
+  ADC at the PWM centre, cap the duty.
+
+### Lessons
+- Check what's on L3 before placing a via. A GND via on an L3 trace is a short.
+- A ratsnest line means two copper islands of the same net aren't joined. Join them anywhere.
+- The tool's "unrouted" list can be stale; trust the DRC counts.
+- Repour after any via change, and re-export after any save.
+- DRC ignores pad-to-pad gaps inside a footprint and gaps between same-net copper; a fab's CAM check doesn't.
+- Check mask and paste from the Gerbers too, not just copper: a pad on "mask from rule" can end up covered.
+- Turn on the Component Clearance rule; it wasn't checked by default.
+- Zeners/TVS face backwards on purpose: the cathode goes to the higher voltage. Orient diodes by the pad nets,
+  not by "GND = −".
+- Fab part models can be 90° off from the footprint: check every IC's pin 1 in the placement preview.
+- A manufacturer's "approved" means they can build it, not that the circuit is right.
+

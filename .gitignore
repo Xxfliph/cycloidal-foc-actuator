@@ -31,6 +31,7 @@ Project Outputs for */
 *.ERR
 Status Report.Txt
 *.Cam
+*.DrcRules.log.jsonl
 # Final fab outputs (zipped Gerbers, BOM, pick-and-place) go in hardware/fab/ and ARE committed
 
 # ---------- OS / editors ----------

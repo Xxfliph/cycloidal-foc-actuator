@@ -491,3 +491,47 @@ One entry per work session. Write what you did, what broke, and what you decided
 - Fab part models can be 90° off from the footprint: check every IC's pin 1 in the placement preview.
 - A manufacturer's "approved" means they can build it, not that the circuit is right.
 
+## Nov 13–15: board_fw builds, safety basics, first test program, start of Drv8316
+
+### board_fw now builds
+- Copied FocController, PIController, MotorDriver, Encoder and app from actuator_fw.
+- MotorDriver on the board: enable = DRV_OFF low, disable = DRV_OFF high.
+- encoder.cpp excluded from the build (still the I2C version; gets rewritten for SSI on SPI2).
+- The old dev-rig loop is parked as `focVelocityTest()` (not called). It turns the driver on before any
+  DRV8316 setup, so it must not run on the board until the boot order exists.
+- Build: 0 errors; the only warnings are unused variables in the parked function.
+
+### Safety basics
+- `__HAL_DBGMCU_FREEZE_TIM1()` right after `HAL_Init()`: when the debugger halts the CPU, TIM1 stops and its
+  outputs are switched off, so a breakpoint can't leave a fixed voltage on the motor.
+- HardFault_Handler and Error_Handler first set DRV_OFF high (driver off) and PHASE_EN low (phases Hi-Z),
+  with direct BSRR writes (one register write per pin, no function calls).
+- Before GPIO init those writes do nothing, but the board is still safe: the 10 k pull-up holds DRV_OFF high
+  and the DRV8316's pull-downs hold INLx low.
+- Still to do: independent watchdog (IWDG).
+
+### First bring-up program (ready to flash)
+- `app_main()`: LED on PB10 toggles every second and prints "blink N" on USART1 (PB6, 115200).
+  Never touches the motor driver. Proves power, SWD flashing, clock and code running.
+
+### Drv8316 class (in progress)
+- SPI frame: bit 15 R/W (1 = read), bits 14–9 register address, bit 8 even parity, bits 7–0 data.
+- `buildFrame()` (private): puts each part in place with shifts, counts the 1s and sets the parity bit if the
+  count is odd. Tested on PC: write reg 3 data 3 → 0 000011 0 00000011, read reg 0 → 1 000000 1 00000000,
+  all 32,768 possible frames come out with even parity.
+- `transfer()` (private): CS low → HAL_SPI_TransmitReceive (one 16-bit item, 5 ms timeout) → CS high →
+  return the status. CS always goes back high, even if the transfer fails.
+- `writeRegister(address, data)` (public): buildFrame → transfer.
+- Next: `readRegister(address, data)`, then the setup sequence (unlock, BUCK_PS_DIS = 1 first, 3x PWM,
+  current-sense gain, overcurrent settings) with a read-back of every register, then fault read/clear.
+
+### Lessons
+- CubeIDE builds the saved file on disk: an unsaved tab (`*`) means you're building the old version.
+- Incremental builds only re-print warnings for files that changed; Clean → Build to see them all.
+- C++ is case-sensitive: `DRV_OFF_Pin` and `DRV_OFF_PIN` are different names.
+- Parity only detects a single flipped bit (two flips cancel out) and doesn't fix anything: the DRV8316
+  ignores a bad frame. Reading every register back after writing it is what catches and fixes errors.
+- `reinterpret_cast` relabels an address's type without changing anything in memory (for HAL's `uint8_t*`
+  buffers); `static_cast` converts a value (float → int, 16-bit → 8-bit).
+- Each setup step for the motor driver must happen before DRV_OFF goes low; the first test program should
+  never enable the driver.

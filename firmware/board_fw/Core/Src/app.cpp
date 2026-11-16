@@ -8,6 +8,8 @@
 #include "PIController.h"
 #include "usart.h"
 
+
+
 void focVelocityTest(void)
 {
 	//declarations and object creation
@@ -80,6 +82,9 @@ void focVelocityTest(void)
 }
 
 void app_main() {
+	CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;   // turn on the debug/trace block DWT lives in
+	DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;              // start the cycle counter
+
 	char msg[128];
 
 	int counter = 0;

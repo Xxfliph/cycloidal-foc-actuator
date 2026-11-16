@@ -14,6 +14,10 @@ public:
 	Drv8316(SPI_HandleTypeDef* hspi, GPIO_TypeDef* csPort, uint16_t csPin);
 
 	HAL_StatusTypeDef writeRegister(uint8_t address, uint8_t data);
+	HAL_StatusTypeDef readRegister(uint8_t address, uint8_t& data);
+	HAL_StatusTypeDef writeVerified(uint8_t address, uint8_t data);
+	HAL_StatusTypeDef modifyRegister(uint8_t address, uint8_t mask, uint8_t newBits);
+	HAL_StatusTypeDef init();
 
 private:
 	SPI_HandleTypeDef* hspi_;

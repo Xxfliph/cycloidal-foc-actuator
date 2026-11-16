@@ -535,3 +535,91 @@ One entry per work session. Write what you did, what broke, and what you decided
   buffers); `static_cast` converts a value (float → int, 16-bit → 8-bit).
 - Each setup step for the motor driver must happen before DRV_OFF goes low; the first test program should
   never enable the driver.
+
+## Nov 15–16: Drv8316 setup code, cross-check, cycloid drive designed + first SolidWorks parts
+
+### Firmware: cross-check before writing the setup code
+- Compared the final Altium netlist, board_fw.ioc + generated init code, and the firmware against the
+  DRV8316C (SLVSH07) and MT6701 (Rev 1.9) PDFs. Every STM32 pin agrees with the PCB.
+- DRV8316C facts confirmed from the PDF: frame format matches buildFrame; SCLK falling-edge capture
+  (= CPOL low, CPHA 2 edge); reply = 8 status + 8 data (on a write, the register's old value);
+  SPI ready 1 ms after power-up; CS high ≥ 400 ns between frames.
+- PWM_MODE must be 2 (3x). Mode 3 turns VREF into a current-limit input and disables SOA/SOB/SOC.
+- BUCK_SEL stays 0 (3.3 V); BUCK_PS_DIS = 1 (power sequencing only works at 5.0/5.7 V).
+- Found for later: SPI2 (MT6701) mode is wrong in CubeMX. It samples on the rising edge, but the
+  MT6701 changes DO on the rising edge. Fix at the encoder step (likely CPOL high, CPHA 1 edge) and
+  confirm with the logic analyzer.
+
+### Firmware: Drv8316 class
+- `readRegister(address, data&)`: read frame → if HAL_OK, data = bottom 8 bits of the reply.
+- `writeVerified(address, data)`: write → read back → compare → retry up to 3 times, else HAL_ERROR.
+- `modifyRegister(address, mask, newBits)`: read → `(value & ~mask) | (newBits & mask)` → writeVerified.
+  Needed because most registers pack several settings, and some reserved bits reset to 1.
+- `transfer()` now waits 80 CPU cycles (~470 ns) after CS goes high, timed with the DWT cycle counter.
+  DWT is switched on at the top of `app_main()` (otherwise the wait would hang forever).
+- `init()`: wait 1 ms → unlock (plain write) → BUCK_PS_DIS = 1 → PWM_MODE = 3x → CSA_GAIN = 0.6 V/A.
+  Stops at the first failed step. Overvoltage (34 V) and overcurrent (latched) left at power-up values.
+- Tested on PC against a fake DRV8316: every register ends at the expected value, other bits untouched,
+  dropped writes get retried, and a dead SPI stops init() without changing anything.
+- Next: `clearFaults()` (read CR2, set bit 0, plain write), then the boot order in app.cpp.
+
+### Mechanical: cycloid drive (started Nov 13)
+**Fit check against parts on hand**
+- Bearings already bought both work: 6803 (17×26×5) as the cam bearing, 6806 (30×42×7) as the output bearing.
+  One of each per disc/output; 5 of each on hand.
+- Ring-pin circle moved from Ø50 → Ø54: at Ø50 the plastic between the disc's output holes and the bore is only
+  1.5 mm; at Ø54 it's 2.5 mm. Housing grows to ~Ø64.
+- Final geometry: 11 ring pins (3 mm dowels), 10-lobe discs → 10:1, eccentricity 1.5 mm (e·N/R = 0.61),
+  6 output pins on r 18.5, disc output holes Ø6.2 (pin + 2e + 0.2 clearance). Tightest profile curve
+  8.45 mm radius vs 1.5 mm pin radius → no undercut.
+- Rotor bolt pattern measured: 4× M2.5 on a Ø20.0 circle (diagonals 18.0 inner / 22.0 outer), ~5.2 mm deep.
+
+**Research (printed cycloidal drives)**
+- Two discs 180° apart (vibration from one disc showed up in other small builds). Three discs rejected:
+  needs longer dowels and a three-piece cam for a benefit too small at this size.
+- Kept steel dowel pins, free to spin in greased slip-fit holes. Bearings on every pin = most efficient but needs
+  ~22 tiny bearings and a bigger pin circle; printed lobes instead of pins = plastic on plastic, wears fast.
+- Expected: 55–66% efficiency in hobby tests → ~0.5–0.65 N·m at the output from ~0.1 N·m motor torque.
+  Play ~0.2–0.25° in a lab build. Printed discs need 4+ walls (one cracked at the bearing with fewer).
+- With two discs the output pins need ~19 mm → the 20 mm dowels work everywhere, nothing to buy.
+
+**Screws (all on hand, nothing to buy)**
+- Cam → rotor: countersunk M2.5 × 10 (head Ø4.6). 0.6 mm × 45° chamfer on a Ø2.8 hole → head ~0.3 mm proud,
+  ~4.4 mm of thread in the 5.2 mm rotor hole, head stays below the bearing.
+- Housing → motor: socket-head M2.5 × 10 through the PCB + a 2.0 mm printed plate: 9.7 − 1.6 − 2.0 = 6.1 mm
+  in the ~6.3 mm stator thread. If they bottom out: small washers on top of the PCB.
+- Plate replaces the 1 mm nylon washers → magnet sleeve gets reprinted 1 mm taller.
+
+**SolidWorks parts done**
+- Global variables in a linked `mechanical/solidworks/vars.txt` (fits like `disc_clr`, `seat_6803`, `insert_hole`
+  can be changed after the fit coupons without editing sketches).
+- `disc.SLDPRT`: profile from the epitrochoid equations in an Equation Driven Curve; output holes at 9° from a
+  lobe valley so disc B is the same part flipped over and turned 18°.
+- `cam_1.SLDPRT`: flange + offset boss A; screw access pockets cut upward only (two notch the boss, unavoidable);
+  key pegs Ø3.0 / Ø2.4 at ±5.8 (different sizes → cam 2 only fits one way); M3 insert hole 6.5 deep.
+- `cam_plug.SLDPRT`: Ø8.4 × 6.3 centring pin for the motor's hollow shaft.
+- `cam_2.SLDPRT`: lens-shaped 0.5 mm spacer (touches only the bearings' inner rings) + boss B offset the other way;
+  M3 counterbore. Prints boss-down (spacer-down would leave a 1.9 mm overhang).
+- Next: output carrier + plate, then housings, assembly, fit coupons, first print.
+
+### Lessons
+**Firmware**
+- Switches vs buttons: most settings stay where you put them (verify them); CLR_FLT resets itself and
+  REG_LOCK is a "password" write, so those two can't be verified and use a plain write.
+- `|` can only turn bits on. To change a setting: clear its bits with `& ~mask`, then `|` the new value.
+- mask = which bits (all 1s across the setting); newBits = the option number. Both are slid by the
+  setting's lowest bit number: `0b11 << 1`, `0b10 << 1`.
+- `&`, `|`, `~` and `<<` widen uint8_t to a 32-bit int first; static_cast<uint8_t> squeezes it back.
+- A do-nothing loop gets deleted by the compiler unless the counter is `volatile`; the DWT counter is
+  the exact way to wait a short time (cycles = time × 170 MHz).
+- Check the real folder before assuming a file name: the files are Drv8316.h/.cpp (capital D).
+
+**Mechanical**
+- SolidWorks wouldn't take a 0 → 2π equation curve in one go: enter it as two halves (0 → π, π → 2π).
+- `vars.txt` must end with a line break, and after editing it, re-link it (the "…" button) or SolidWorks keeps
+  the old values. Save Notepad first.
+- Rule I'm using: if a number depends on the printer, it gets a variable; if it follows from the design, type it.
+- A cut sketched on a bottom face is seen from underneath, so left/right flips. Sketch on the Top plane instead.
+- Symmetric key pegs let a part go on 180° wrong; making them different sizes makes it foolproof.
+- Do the screw-length arithmetic before drawing: my first insert hole was 0.2 mm too shallow for the M3 × 8.
+- Check overhangs per print orientation: cam 2 had to flip to print without sagging.

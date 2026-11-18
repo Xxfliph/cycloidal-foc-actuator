@@ -623,3 +623,53 @@ One entry per work session. Write what you did, what broke, and what you decided
 - Symmetric key pegs let a part go on 180° wrong; making them different sizes makes it foolproof.
 - Do the screw-length arithmetic before drawing: my first insert hole was 0.2 mm too shallow for the M3 × 8.
 - Check overhangs per print orientation: cam 2 had to flip to print without sagging.
+
+## Nov 16–17: Rest of the parts drawn, fit coupon results, first motion test ready to print
+
+### SolidWorks parts done
+- `output_carrier.SLDPRT` (15.3 tall, prints flange-down): Ø44 × 8 flange, Ø33 × 0.5 neck, hub_30 hub
+  (7 − hub_short tall, sits in the 6806's bore), Ø12 bore. 6 output pin holes pin_press × 7 deep on r18.5 at
+  9° + 60k (lined up with the disc holes). 4 M3 inserts on r10.5 at 0/90/180/270 for the output plate.
+- `output_plate.SLDPRT`: Ø33 × 0.5 lip + Ø36 × 3 plate, Ø12 bore. Clamps the 6806 from the other side
+  with 4 × M3 into the carrier's inserts (Ø3.4 on r10.5). 4 × M3 tap holes (Ø2.8) on r14 at 45° + 90k to
+  bolt the next link/load onto the output. First drawn with 6 tap holes; fixed to 4.
+- Housings changed to option B: plain Ø74 cylinder instead of Ø64 + lugs (the lugs needed supports).
+  4 M3 screws on r32.5, halfway between ring pins: 16.36°, 114.55°, 180°, 278.18° (360·(k+0.5)/11, k = 0, 3, 5, 8).
+- `housing_rear.SLDPRT` (25.05 tall, prints plate-down): 2.0 plate, Ø40.4 motor ring, Ø43 can bore, Ø28
+  opening, wire window, 4 × Ø2.8 motor screw holes at ±12.021, 11 ring-pin holes pin_slip × 4.75 deep,
+  4 M3 inserts. Window bottom moved Y 13 → 11 to remove two sharp horns. Ø41–52 × 1.0 relief ring under
+  the plate so the PCB's THT solder joints (J1/J4) don't touch it.
+- `housing_front.SLDPRT` (28.25 tall): Ø57.6 disc cavity, Ø45 shelf, 6806 seat, Ø39 lip, 11 ring-pin holes,
+  4 × M3×16 through with Ø6.2 counterbores 16.25 deep (1 mm floor above the cavity).
+- Test spacers: 4 × Ø5.5 rings, Ø2.8 hole, 1.6 thick. They stand in for the PCB between the motor and
+  housing_rear until the board arrives.
+
+### Fit coupon results → vars.txt
+- Bearing seats: 6803 in Ø26.1 and 6806 in Ø42.1 both "very good" → seat_6803 26.1, seat_6806 42.1.
+- Shaft stubs too loose (bearings fall off with a light push) → boss_17 17.15, hub_30 30.25 for now.
+  Shaft coupon v2 (Ø17.10/17.20 stubs, Ø30.20/30.30 tubes) printed to confirm.
+- Dowel holes: 3.3 = dowel spins freely (pin_slip), 3.2 = press fit (pin_press), 3.1 too tight.
+- Heat inserts: 4.4 cleanest → insert_hole 4.4. Disc output hole clearance 0.2 → out_hole_clr 0.5 (Ø6.5).
+- Motor shaft bore measured 8.5 → plug_d 8.6 (was 8.4); cam_1 plug pocket = plug_d + 0.1.
+- Belt plate: holes line up, but the screws are too long to bite, so it wobbles (screw length, not the holes).
+- Printer pattern: holes print ~0.2–0.3 small, outside diameters ~0.15–0.25 small.
+
+### Test discs
+- disc_clr in the equation curve didn't update the geometry, even with Ctrl+Q. Workaround: typed pin radius
+  per disc (1.5 / 1.55 / 1.6) → three files at clearance 0.00 / 0.05 / 0.10 (valley at 24.00 / 23.95 / 23.90).
+- Over-defined sketch on the 0.05 disc: both curve halves have to be changed, not just one.
+- Disc orientation dot still not cut (needed before the final disc pair).
+
+### Export + print setup
+- STL: binary, mm, custom deviation 0.02 mm (type 0.0008: the box works in inches), angle 5°.
+- Checked housing_rear and two discs from the STL files: every dimension matches the design.
+- Bambu plate: housing_rear, 3 discs, plug, 4 spacers, shaft coupon v2. Discs per-object 0.16 mm,
+  5 walls, 40% gyroid. Brim only on spacers + plug. ~2 h 9 min, 55 g. cam_1 waits for the shaft coupon.
+
+### Lessons
+- Leave room for what sticks out of the PCB: THT solder joints needed a 1 mm relief under the housing.
+- When a rectangle cut ends inside a circle's edge, it leaves thin horns. Start it inside the hole instead.
+- A global variable inside an equation-driven curve doesn't reliably rebuild the curve. Type the number, or
+  offset a fixed curve.
+- Bambu Studio: per-object settings only apply to the objects with the orange icon; check every one.
+- SolidWorks STLs come in Y-up: use Lay on Face (F) in Bambu Studio.

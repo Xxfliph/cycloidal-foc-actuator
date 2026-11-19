@@ -12,7 +12,7 @@
 class MotorDriver {
 
 public:
-	MotorDriver(TIM_HandleTypeDef* htim, GPIO_TypeDef* offPort,uint16_t offPin);
+	MotorDriver(TIM_HandleTypeDef* htim, GPIO_TypeDef* offPort,uint16_t offPin, GPIO_TypeDef* phasePort, uint16_t phasePin);
 	void start();
 	void setDuty(const float duty[3]);
 	void enable();
@@ -22,6 +22,8 @@ private:
     TIM_HandleTypeDef* htim_;
     GPIO_TypeDef* offPort_;
     uint16_t offPin_;
+    GPIO_TypeDef* phasePort_;
+    uint16_t phasePin_;
 
 };
 

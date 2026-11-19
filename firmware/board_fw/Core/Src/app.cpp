@@ -16,7 +16,7 @@ void focVelocityTest(void)
 {
 	//declarations and object creation
 	FocController myFocController(15.0f, 3.0f, 11);
-	MotorDriver myMotorDriver(&htim1, DRV_OFF_GPIO_Port, DRV_OFF_Pin);
+	MotorDriver myMotorDriver(&htim1, DRV_OFF_GPIO_Port, DRV_OFF_Pin, PHASE_EN_GPIO_Port, PHASE_EN_Pin);
 	PIController myPIController(0.3f, 3.0f, 2.0f);
 	//Encoder myEncoder(&hi2c1, 0x06);
 
@@ -106,14 +106,83 @@ void printFaults(uint8_t faults) {
 	HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
 }
 
+HAL_StatusTypeDef bootDriver(Drv8316& drv, MotorDriver& motor) {
+	char msg[128];
+	int len = 0;
+
+	if (drv.init() != HAL_OK) {
+		len = snprintf(msg, sizeof(msg), "drv init failed\r\n");
+		HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+		return HAL_ERROR;
+	}
+	len =snprintf(msg, sizeof(msg), "drv init ok\r\n");
+	HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+
+	motor.start();
+	motor.enable();
+	//let the driver settle before the next steps
+	HAL_Delay(1);
+
+	//read the current flags
+	uint8_t faults = 0;
+	if (drv.readFaults(faults) != HAL_OK) {
+		len =snprintf(msg, sizeof(msg), "read faults failed\r\n");
+		HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+		return HAL_ERROR;
+	}
+	len =snprintf(msg, sizeof(msg), "before clear: \r\n");
+	HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+	printFaults(faults);
+
+	//resets all latched flags, then the chip re-checks everything. Any problem that still happening gets flagged again.
+	//flags whose cause is gone stay cleared
+	if (drv.clearFaults() != HAL_OK) {
+		len =snprintf(msg, sizeof(msg), "clear faults failed\r\n");
+		HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+		return HAL_ERROR;
+	}
+
+	//read the persisting flags that remained after clearFaults. The remaining flags are real issues.
+	if (drv.readFaults(faults) != HAL_OK) {
+		len =snprintf(msg, sizeof(msg), "read faults failed\r\n");
+		HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+		return HAL_ERROR;
+	}
+	len = snprintf(msg, sizeof(msg), "after clear: \r\n");
+	HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+	printFaults(faults);
+
+	if (((faults >> 0) & (0b1)) == 1) {
+		len =snprintf(msg, sizeof(msg), "fault still present, driver off\r\n");
+		HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+		return HAL_ERROR;
+	}
+	len =snprintf(msg, sizeof(msg), "drv ready\r\n");
+	HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+
+	return HAL_OK;
+}
+
 void app_main() {
 
 	CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;   // turn on the debug/trace block DWT lives in
 	DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;              // start the cycle counter
 
+	/*
+	 * Drv8316 class configures the chip and reads its status. It talks through SPI
+	 * MotorDriver class runs the power stage: PWM duties + on/off. It talks through TIM1 and the GPIO pins
+	 */
 	Drv8316 myDrv8316(&hspi3, DRV_CS_GPIO_Port, DRV_CS_Pin);
+	MotorDriver myMotorDriver(&htim1, DRV_OFF_GPIO_Port, DRV_OFF_Pin, PHASE_EN_GPIO_Port, PHASE_EN_Pin);
 
 	char msg[128];
+
+	if(bootDriver(myDrv8316, myMotorDriver) != HAL_OK) {
+		myMotorDriver.disable();
+		int len =snprintf(msg, sizeof(msg), "boot failed, driver off\r\n");
+		HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+		while (true) {}
+	}
 
 	int counter = 0;
 	while (true) {

@@ -700,7 +700,7 @@ One entry per work session. Write what you did, what broke, and what you decided
   yet. That's the front housing's job; the dowels themselves were solid in the carrier.
 
 ### Changes
-- vars.txt: boss_17 17.20 → 17.10, hub_30 30.25 → 30.15, pin_slip 3.30 → 3.35, new plug_shaft_d 8.8.
+- vars.txt: boss_17 17.20 → 17.13, hub_30 30.25 → 30.18, pin_slip 3.30 → 3.35, new plug_shaft_d 8.8.
 - Stepped cam plug: Ø8.8 × 3.8 (motor shaft, chamfered) + Ø8.6 × 2.5 (cam_1 pocket). Kept separate so
   cam_1's pocket doesn't change.
 - New test discs with negative clearance (pin radius 1.45 / 1.40 / 1.35 → valley 24.05 / 24.10 / 24.15),

@@ -7,6 +7,8 @@
 //#include "encoder.h"
 #include "PIController.h"
 #include "usart.h"
+#include "Drv8316.h"
+#include "spi.h"
 
 
 
@@ -81,9 +83,35 @@ void focVelocityTest(void)
 	}
 }
 
+/*
+ * This function prints the fault fault flags in words.
+ * Note that NPOR is opposite from other flags. For every other flag, 1 means there's a problem. For NPOR, 1 means
+ * there's no problem. (the N before it stands for not).
+ * printFaults() takes in 8 boxes from readFaults() and sends one line over UART that shows each flag by name with 0 or 1
+ * Each value is extracted by shifting its position to 0, then "and"ing it with 1 (0b1) to keep only that box
+ */
+void printFaults(uint8_t faults) {
+	char msg[128];
+
+	uint8_t fault = (faults >> 0) & 0b1;
+	uint8_t ot = (faults >> 1) & 0b1;
+	uint8_t ovp	= (faults >> 2) & 0b1;
+	//NPOR is inverted: 1 = normal, 0 = power-on reset not cleared yet
+	uint8_t npor = (faults >> 3) & 0b1;
+	uint8_t ocp = (faults >> 4) & 0b1;
+	uint8_t spi	= (faults >> 5) & 0b1;
+	uint8_t bk = (faults >> 6) & 0b1;
+
+	int len = snprintf(msg, sizeof(msg), "FAULT=%d OT=%d OVP=%d NPOR=%d OCP=%d SPI=%d BK=%d\r\n", fault, ot, ovp, npor, ocp, spi, bk);
+	HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+}
+
 void app_main() {
+
 	CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;   // turn on the debug/trace block DWT lives in
 	DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;              // start the cycle counter
+
+	Drv8316 myDrv8316(&hspi3, DRV_CS_GPIO_Port, DRV_CS_Pin);
 
 	char msg[128];
 

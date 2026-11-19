@@ -8,7 +8,7 @@
 "seat_6806" = 42.1
 "disc_t" = 5
 "out_hole_clr" = 0.5
-"boss_17" = 17.15
+"boss_17" = 17.13
 "rotor_bolt_R" = 10
 "m25_clr" = 2.8
 "m25_head" = 5
@@ -20,9 +20,10 @@
 "m3_clr" = 3.4
 "m3_head" = 6.2
 "pin_press" = 3.2
-"pin_slip" = 3.3
-"hub_30" = 30.25
+"pin_slip" = 3.35
+"hub_30" = 30.18
 "hub_short" = 0.2
 "m3_tap" = 2.8
 "rear_plate_t" = 2
 "motor_ring" = 40.4
+"plug_shaft_d" = 8.8

@@ -92,13 +92,18 @@ HAL_StatusTypeDef Drv8316::readRegister(uint8_t address, uint8_t& data) {
 
 	HAL_StatusTypeDef status = transfer(frame, reply);
 
-	//if data transfer is okay, read the reply straight into data.
+	//if data transfer is okay, read the reply straight into data (reply variable)
 	if(status == HAL_OK) {
 		data = static_cast<uint8_t>(reply);
 	}
 	return status;
 }
 
+/*
+ *   Different from writeRegister: writeRegister sends once and doesn't check.
+ *   It's for BUTTONS (CLR_FLT, REG_LOCK), which don't read back what you
+ *   wrote, so writeVerified would always report a false failure on them.
+ */
 HAL_StatusTypeDef Drv8316::writeVerified(uint8_t address, uint8_t data) {
    //loop three times, if errors more than three times return error
 	for (int i = 0; i < 3; i++) {
@@ -172,7 +177,7 @@ HAL_StatusTypeDef Drv8316::modifyRegister(uint8_t address, uint8_t mask, uint8_t
 }
 
 HAL_StatusTypeDef Drv8316::init() {
-	//data sheet says SPI only read 1ms after power up
+	//data sheet says SPI only ready 1ms after power up
 	HAL_Delay(1);
 
 	//write unlock
@@ -197,4 +202,31 @@ HAL_StatusTypeDef Drv8316::init() {
 
 	//only return ok if everything was written without error
 	return HAL_OK;
+}
+
+/*
+ * function used to clear faults.
+ * When a problem is detected, the chip is "latched", the DRV sets a fault and keeps it set
+ * even after the problem goes away. Flag only clears when you reset the CLR_FLT bit
+ * (bit 0 of register 4)
+ * We don't use modifyRegister here since the CLR_FLT is a button, if you read it right after
+ * write, you won't get the value you wrote, so use writeRegister from the table above
+ */
+HAL_StatusTypeDef Drv8316::clearFaults() {
+	uint8_t value = 0;
+	HAL_StatusTypeDef status = readRegister(4, value);
+	if (status != HAL_OK) {
+		return status;
+	}
+	value = (value) | (0b1 << 0);
+	return writeRegister(4, value);
+}
+
+/*
+ * A way to see which faults are still active after clearFaults(). DRV keeps a summary of
+ * its faults in register 0 (IC Status), each bit is one fault type. Register is read only
+ * uint8_t& faults is register number
+ */
+HAL_StatusTypeDef Drv8316::readFaults(uint8_t& faults) {
+	return readRegister(0, faults);
 }

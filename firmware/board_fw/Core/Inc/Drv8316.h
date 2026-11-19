@@ -18,6 +18,8 @@ public:
 	HAL_StatusTypeDef writeVerified(uint8_t address, uint8_t data);
 	HAL_StatusTypeDef modifyRegister(uint8_t address, uint8_t mask, uint8_t newBits);
 	HAL_StatusTypeDef init();
+	HAL_StatusTypeDef clearFaults();
+	HAL_StatusTypeDef readFaults(uint8_t& faults);
 
 private:
 	SPI_HandleTypeDef* hspi_;

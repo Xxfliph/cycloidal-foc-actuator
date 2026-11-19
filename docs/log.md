@@ -673,3 +673,85 @@ One entry per work session. Write what you did, what broke, and what you decided
   offset a fixed curve.
 - Bambu Studio: per-object settings only apply to the objects with the orange icon; check every one.
 - SolidWorks STLs come in Y-up: use Lay on Face (F) in Bambu Studio.
+
+## Nov 18–19: First motion test, fits corrected, front housing + test disc batch; Drv8316 fault functions
+
+### Shaft coupon v2 → vars.txt
+- Stubs printed 0.3 small (17.20 → 16.9, 17.10 → 16.8); tubes the same (30.20 → 29.8, 30.30 → 30.0).
+- 16.9 stub = firm push on the 6803 → boss_17 17.20. 29.8 tube held the 6806, 29.9 would be perfect →
+  hub_30 stays 30.25.
+- Printed cam_1, cam_2, output carrier, output plate (~1 h 6 min). Linked sketch dimensions DO follow
+  vars.txt (Σ next to the value); only the disc's equation curve didn't.
+
+### First motion test (rear half only)
+- Assembly order: plug → cam_1 + 4 countersunk M2.5 → 6803 pressed on (it covers the cam screws, so the cam
+  must be screwed down first) → motor into housing_rear, socket-head M2.5 through spacer + plate into the
+  stator → 11 greased ring pins → disc.
+- cam_1 heat insert: centre hole on the boss/peg side, pressed flush (M3×8 from cam_2 reaches ~5.7 mm).
+- Both bearings needed plastic scraped off before they'd go on: 6803 on the 17.20 boss, 6806 on the carrier
+  hub. Real parts print fatter than the thin coupons.
+- Some ring-pin holes dragged on the dowels. Plug was loose in the motor shaft (8.6 prints ~8.4 in an 8.5 bore).
+- All three test discs turned, with some resistance spots. Hard to judge: the ring pins are only held 4.75 mm
+  deep at the bottom and lean.
+- Forgot to label the discs. Measured tip to tip: 53.5 / 53.4 / 53.3 = 0.00 / 0.05 / 0.10 (design 54.00 /
+  53.90 / 53.80). Discs print ~0.5 small across the tips → real clearance ≈ 0.25 / 0.30 / 0.35.
+- Two discs + output carrier: the gearing works (carrier dowels pass through both discs and get driven
+  round). The whole carrier tilts and the top disc climbs, because nothing holds the 6806 or the pin tops
+  yet. That's the front housing's job; the dowels themselves were solid in the carrier.
+
+### Changes
+- vars.txt: boss_17 17.20 → 17.10, hub_30 30.25 → 30.15, pin_slip 3.30 → 3.35, new plug_shaft_d 8.8.
+- Stepped cam plug: Ø8.8 × 3.8 (motor shaft, chamfered) + Ø8.6 × 2.5 (cam_1 pocket). Kept separate so
+  cam_1's pocket doesn't change.
+- New test discs with negative clearance (pin radius 1.45 / 1.40 / 1.35 → valley 24.05 / 24.10 / 24.15),
+  1 / 2 / 3 dots to tell them apart. Printed in pairs, plus a second 0.00 and 0.05 to make pairs.
+- New cams exported. STL check: bosses came out 17.13, not 17.10 (vars value to double-check).
+- `output_arm.SLDPRT`: Ø36 hub + 12 × 5 bar to 80 mm, chamfered tip, 4 × Ø3.4 on r14 at 45° + 90k (output
+  plate tap holes, M3×8), Ø12 centre. For turning the output by hand and measuring backlash:
+  backlash (°) = tip movement / 80 × 57.3.
+- Checked housing_front.STL: 57.6 cavity 0–11, Ø45 shelf to 19.75, 6806 seat to 26.75, Ø39 lip, pin holes
+  3.35 × 15.75, M3 counterbores to 12 (1 mm floor). Prints lip face down: every bore widens upward, no supports.
+- Batch plate: housing_front, 9 discs, new cam_1 + cam_2, stepped plug, output arm. ~4 h 54 min, 114 g.
+
+### Firmware: Drv8316 class
+- `clearFaults()`: read CR2 (reg 4) → set CLR_FLT (bit 0) → plain `writeRegister`. Not writeVerified:
+  CLR_FLT is a button. The chip clears the faults and sets the bit back to 0 by itself, so a read-back
+  would always fail and report an error after a clear that worked. Must run after `init()` (registers
+  have to be unlocked first).
+- `readFaults(faults&)`: reads IC Status (reg 0). Boxes: 6 BK_FLT, 5 SPI_FLT, 4 OCP, 3 NPOR, 2 OVP,
+  1 OT, 0 FAULT. Read-only register.
+- Added a comment above writeVerified explaining switches (writeVerified) vs buttons (writeRegister).
+
+### Firmware: app.cpp
+- `printFaults(faults)`: plain function, not part of the class (printing is the app's job). Pulls each
+  box out with `(faults >> n) & 0b1` and prints one line over USART1:
+  `FAULT=0 OT=0 OVP=0 NPOR=1 OCP=0 SPI=0 BK=0`. Prints 0s and 1s, not just the names of set flags,
+  because NPOR is inverted.
+- NPOR is inverted (checked in the datasheet): 0 = power-on reset detected, 1 = normal. It stays 0 after
+  power-up until CLR_FLT is written, so a healthy board shows NPOR=0 before clearFaults() and
+  NPOR=1 after.
+- `Drv8316 myDrv8316(&hspi3, DRV_CS_GPIO_Port, DRV_CS_Pin)` created in `app_main()` after the DWT
+  lines (transfer() needs DWT running). Added `#include "spi.h"` for hspi3.
+- Not tested on hardware yet (board not here).
+
+### Next
+- Mechanical:
+  - Cams: tell how hard the bearings push on. Free the stiff housing_rear pin holes with a 3.3–3.4 mm drill bit.
+  - Heat inserts in housing_rear (4) once the front housing fits, then full build: cam_1 + bearing A → disc A →
+    cam_2 + bearing B → disc B (flipped) → carrier → front housing.
+  - Test disc pairs loosest to tightest; keep the tightest pair that turns smoothly all the way round.
+  - Carrier inserts + output plate + arm → friction and backlash.
+- Firmware:
+  - Boot order in app_main(): init() → PHASE_EN high → DRV_OFF low → clearFaults() →
+    readFaults() → printFaults() + register dump over UART.
+
+### Lessons
+- Coupons print smaller than real parts: thin rings at default walls vs solid parts at 5 walls. Leave margin.
+- Label test parts before printing (dots or a marker), or measure them apart afterwards.
+- Disc B is the same part as disc A, flipped. Their holes sit 3 mm apart (2 × eccentricity) on purpose;
+  the output dowel sits halfway between, and each Ø6.5 hole rolls around it.
+- Build order matters: disc A can't get past cam_2's bearing, and the cam screws hide under bearing A.
+- The cam plug centres cam_1 on the motor axis. The screws alone allow ~0.15 mm of slop, more than the
+  clearance steps being tested.
+- The rear half alone can't hold the output straight; test the drive with the front housing on.
+- Heat inserts are semi-permanent: dry-fit everything first, insert last.

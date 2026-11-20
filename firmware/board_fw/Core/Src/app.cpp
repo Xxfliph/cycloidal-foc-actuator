@@ -106,6 +106,15 @@ void printFaults(uint8_t faults) {
 	HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
 }
 
+//used to print each bit in a register (address is the register number, value is the value of a bit
+void printRegister(uint8_t address, uint8_t value) {
+	char msg[128];
+	int len = snprintf(msg, sizeof(msg), "reg %d = %d%d%d%d%d%d%d%d\r\n", address, (
+			value >> 7) & 0b1, (value >> 6) & 0b1, (value >> 5) & 0b1, (value >> 4) & 0b1,
+			(value >> 3) & 0b1, (value >> 2) & 0b1, (value >> 1) & 0b1, (value >> 0) & 0b1);
+	HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+}
+
 HAL_StatusTypeDef bootDriver(Drv8316& drv, MotorDriver& motor) {
 	char msg[128];
 	int len = 0;
@@ -117,6 +126,17 @@ HAL_StatusTypeDef bootDriver(Drv8316& drv, MotorDriver& motor) {
 	}
 	len =snprintf(msg, sizeof(msg), "drv init ok\r\n");
 	HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+
+	//outputs the entire state (8 bits) of registers 3 - 8.
+	for(uint8_t address = 3; address <= 8; address++) {
+		uint8_t value = 0;
+		if (drv.readRegister(address, value) != HAL_OK) {
+			len = snprintf(msg, sizeof(msg), "read register failed\r\n");
+			HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+			return HAL_ERROR;
+		}
+		printRegister(address, value);
+	}
 
 	motor.start();
 	motor.enable();

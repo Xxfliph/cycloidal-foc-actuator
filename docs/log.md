@@ -755,3 +755,107 @@ One entry per work session. Write what you did, what broke, and what you decided
   clearance steps being tested.
 - The rear half alone can't hold the output straight; test the drive with the front housing on.
 - Heat inserts are semi-permanent: dry-fit everything first, insert last.
+
+## Nov 19: Output-hole binding found, final disc test plate; boot sequence (bootDriver), PHASE_EN in MotorDriver
+
+### Mechanical: batch results (black PETG, second P2S)
+- Printed housing_front, 9 test discs, new cam_1 + cam_2 (boss 17.13), stepped plug, output arm.
+- Holes print 0.3 small on both printers and both colours (disc output hole 6.5 → 6.2, grey and black).
+  Printer/colour switch made no measurable difference.
+- housing_front M3×16: 3.6 mm of thread reaches the rear inserts (designed 4.0). Lost 0.4 because the
+  counterbore floor printed as a bridge (lip face down) and sagged. Enough for a brass insert.
+  CAD counterbore 16.25 → 16.75 for next time. Counterbores sit over solid wall (r32.5 vs cavity r28.8),
+  not over the cavity.
+
+### Mechanical: disc mesh test (front housing held by hand, no carrier, dry)
+- 0.00 smooth; −0.05 turns but rough; −0.10 binds. 0.05 / 0.10 (single grey discs) loosest.
+- Felt the discs nudge the front housing: strong at −0.05, less at 0.00, barely at 0.05 / 0.10. Means real
+  contact force each turn; unknown whether screwing the housing down makes 0.00 better or worse.
+- Ring pins don't spin; the disc slides on them. Normal for plain dowel pins (disc-pin friction is lower than
+  pin-hole friction). Grease is what helps, not a looser hole.
+
+### Mechanical: output carrier binding
+- Carrier dowels wouldn't turn with both discs on. Cause: disc output holes too small.
+- Simulated a full output turn: every hole centre stays exactly e = 1.5 from its dowel centre, so the hole
+  needs Ø ≥ 6.0 (dowel 3.0 + 2e). Printed 6.2 left only 0.1 per side for dowel placement, hole accuracy and
+  carrier-to-cam misalignment, which isn't enough.
+- How the output works: the 6806 in the front housing keeps the carrier centred and upright; the dowels only
+  turn it. Loose output holes give backlash (≈ extra clearance / 18.5 mm rad), not wobble. At any moment
+  disc A drives the dowels on one half of the circle and disc B the other half; the sideways pushes cancel,
+  so the carrier gets a pure twist. The dividing line goes round once per motor turn.
+- Why the dowels "only fit sometimes": each disc seats on the pins in 10 positions (36° apart), holes repeat
+  every 60°. Unflipped disc B never lines up; flipped disc B lines up in only 2 of its 10 positions. Fix: drop
+  B in, check all 6 hole pairs overlap the same way, else turn B one lobe and retry; pencil a line across
+  both rims once found.
+
+### Mechanical: changes
+- vars.txt: seat_6803 26.1 → 26.02 (discs slid on/off the bearing too easily), out_hole_clr per test disc,
+  pin_slip 3.35 (one rear pin hole still dragged at 3.30). hub_30 settled at 30.20 (previous entry's 30.18
+  was a typo); only matters for the next carrier print.
+- New housing_rear: pin holes 3.35, plus 4 × M3 insert holes in the bottom face for a PCB cover at r31,
+  45° + 90k, 5.5 deep. First export had the holes drifting (r31/32.5, 42–48°) from an under-defined sketch;
+  fixed with one circle + circular pattern. r31 leaves 3.5 mm of outer wall (r32.5 left 2.0) and stays
+  clear of the Ø50 PCB and the relief ring.
+- Final test discs (all checked from the STLs):
+  - 2 dots: 0.00 profile, out_hole_clr 0.7 (Ø6.7, ~6.4 printed, 0.2 spare per side)
+  - 4 dots: 0.00 profile, out_hole_clr 0.9 (Ø6.9)
+  - 6 dots: +0.05 profile (pin radius 1.55), out_hole_clr 0.8 (Ø6.8), backup if 0.00 tightens when screwed down
+  - All bore 26.02. Dots came out as matching pairs on one face (1/2/3 → 2/4/6).
+- Plate: new housing_rear + 2 of each disc, same printer and filament, ~3 h 30 min.
+- Plan: PCB cover as a cup on housing_rear's bottom face (≥ ~12 mm inside, cable exit) once the PCB STEP is in.
+
+### Firmware: MotorDriver
+- PHASE_EN moved into the class: constructor now also takes `phasePort, phasePin`.
+  `enable()` = PHASE_EN high → DRV_OFF low; `disable()` = PHASE_EN low → DRV_OFF high.
+  "On" and "off" are now one call each and can't be done half-way.
+- The two pins work in opposite directions: PHASE_EN high = phases connected, DRV_OFF high = driver off.
+- Fixed the stale "DRV_EN" comments; they now say what each pin level does.
+
+### Firmware: app.cpp
+- `printRegister(address, value)`: prints one register as its 8 boxes, bit 7 first (same order as the
+  datasheet tables), e.g. `reg 4 = 01100100`. No hex.
+- `bootDriver(Drv8316& drv, MotorDriver& motor)`: the whole boot sequence, printing each step:
+  init() → register dump CR1–CR6 (driver still off) → PWM start at 0 duty → enable() → 1 ms settle →
+  read + print faults ("before clear") → clearFaults() → read + print faults ("after clear") →
+  FAULT bit still 1 → error. Any failure prints which step failed and returns HAL_ERROR.
+- Before clear = history since power-up; after clear = problems still happening. Decide on "after".
+  The NPOR 0 → 1 change also proves clearFaults() works on the real chip.
+- Turn-on order: PWM at 0 → PHASE_EN high → DRV_OFF low. With all duties 0, PHASE_EN high just ties every
+  phase to ground (braking), so nothing can drive current.
+- `app_main()`: DWT on → create Drv8316 (`&hspi3, DRV_CS_GPIO_Port, DRV_CS_Pin`) + MotorDriver →
+  `bootDriver()`; on failure: disable() → print "boot failed, driver off" → stop forever (written once).
+  Then the blink loop. No blinking = boot failed, even without a serial cable.
+- Expected output on a healthy board: reg 3..8 = 00000011 / 01100100 / 01000110 / 00010000 / 00000010 /
+  00010000 (reg 3 might read 0, which is fine if 4/7/8 hold their values), "after clear" all 0 with NPOR=1,
+  then "drv ready".
+- Builds with 0 errors. Not tested on hardware yet (board not here).
+
+### Next
+- Mechanical:
+  - 8 inserts into the new housing_rear before the motor goes in (4 top for the front housing, 4 bottom for
+    the cover). Swap the motor/cam unit across: 4 M2.5 from underneath, motor + cam + bearing lift out as one piece.
+  - Test with the front housing screwed down: 0.00/0.7 first, then 0.00/0.9, then +0.05/0.8. Pick the smallest
+    holes and tightest profile that turn smoothly; set out_hole_clr in vars.txt to the winner.
+  - Buy Super Lube (synthetic grease with PTFE); retry the −0.05 pair once greased.
+  - Then carrier inserts → output plate → arm → friction and backlash.
+- Firmware:
+  - MT6701 encoder over SPI2: fix SPI mode in CubeMX, then 3-byte read + CRC in `Encoder::update()`.
+  - nFAULT interrupt (driver off, latched) and IWDG watchdog.
+
+### Lessons
+**Mechanical**
+- Make each geometric requirement explicit and check it: the output holes needed Ø ≥ pin + 2e, and the
+  printed size was only 0.2 above that.
+- A sketch that says "Under Defined" can move when one dimension changes. Pattern one fully defined circle
+  instead of placing four by hand.
+- A bigger hole is a looser fit. Check the direction before changing a value.
+- 0.02 mm changes are below what the printer can repeat (~±0.05); don't re-export for them.
+- Keep fit-critical parts on the same printer and filament where possible, and note which one was used.
+- Counterbore floors printed as bridges sag a few tenths; add a little depth.
+- When a test needs a feature that isn't printed yet (front housing screwed down), results are only a guide.
+
+**Firmware**
+- C++: `==` is worked out before `&`, so write `((x >> n) & 0b1) == 1` with the extra brackets.
+- C++: a variable name can be created once per level of braces; after that, reuse it (`len = ...`, no `int`).
+- A function isn't only for reuse: bootDriver() runs once, but it gives failure handling one place and
+  gives the sequence a name.

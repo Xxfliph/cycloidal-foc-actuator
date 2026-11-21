@@ -11,7 +11,7 @@
 
 class Encoder {
 public:
-	Encoder(I2C_HandleTypeDef* hi2c, uint8_t addr);
+	Encoder(SPI_HandleTypeDef* hspi, GPIO_TypeDef* csPort, uint16_t csPin);
 	HAL_StatusTypeDef update();
 	uint16_t getRawCount() const;
 	float getAngle() const;
@@ -21,8 +21,9 @@ public:
 
 
 private:
-	I2C_HandleTypeDef* hi2c_;
-	uint16_t addr_;
+	SPI_HandleTypeDef* hspi_;
+	GPIO_TypeDef* csPort_;
+	uint16_t csPin_;
 	uint16_t rawCount_;
 	uint16_t prevCount_;
 	int32_t totalCount_;

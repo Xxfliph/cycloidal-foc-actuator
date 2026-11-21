@@ -6,8 +6,8 @@
  */
 #include "encoder.h"
 
-Encoder::Encoder(I2C_HandleTypeDef* hi2c, uint8_t addr)
-	: hi2c_(hi2c), addr_(static_cast<uint16_t>(addr<<1)), rawCount_(0), prevCount_(0), totalCount_(0), firstRead_(true), prevCycles_(0), rawVelocity_(0.0f), filteredVelocity_(0.0f)
+Encoder::Encoder(SPI_HandleTypeDef* hspi, GPIO_TypeDef* csPort, uint16_t csPin)
+	: hspi_(hspi), csPort_(csPort), csPin_(csPin), rawCount_(0), prevCount_(0), totalCount_(0), firstRead_(true), prevCycles_(0), rawVelocity_(0.0f), filteredVelocity_(0.0f)
 {
 }
 

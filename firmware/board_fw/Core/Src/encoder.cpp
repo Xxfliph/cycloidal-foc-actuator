@@ -10,7 +10,7 @@
  * Encoder uses SPI now, needs to know the SPI Bus (2) and the Port (B) and the pin number
  */
 Encoder::Encoder(SPI_HandleTypeDef* hspi, GPIO_TypeDef* csPort, uint16_t csPin)
-	: hspi_(hspi), csPort_(csPort), csPin_(csPin), rawCount_(0), prevCount_(0), totalCount_(0), firstRead_(true), prevCycles_(0), rawVelocity_(0.0f), filteredVelocity_(0.0f)
+	: hspi_(hspi), csPort_(csPort), csPin_(csPin), rawCount_(0), magStatus_(0), prevCount_(0), totalCount_(0), firstRead_(true), prevCycles_(0), rawVelocity_(0.0f), filteredVelocity_(0.0f)
 {
 }
 
@@ -56,6 +56,39 @@ HAL_StatusTypeDef Encoder::update() {
 		// which is also why you need to cast it back into a uint16_t since its an int now.
 		// uint16_t because the angle number is 0 - 16383 which is a 14 bit angle.
 		rawCount_ = static_cast<uint16_t>((rxBytes[0]<<6) | (rxBytes[1]>>2));
+
+		/*
+		 * Magnet status M3..M0 (from the MT6701 datasheet, SSI section):
+		 *   M1 M0 : 00 = field normal, 01 = magnet too strong, 10 = magnet too weak
+		 *   M2    : 1 = push-button detected (not used)
+		 *   M3    : 1 = loss of track (angle may be wrong)
+		 *
+		 * The status is split across two bytes:
+		 *            box: 1    2    3    4    5    6    7    8
+		 *            bit: 7    6    5    4    3    2    1    0
+		 *   rxBytes[1]:  A5   A4   A3   A2   A1   A0   M3   M2
+		 *   rxBytes[2]:  M1   M0   C5   C4   C3   C2   C1   C0
+		 *
+		 * Pattern: shift the wanted bits down to the bottom, then & with a mask.
+		 * Mask 0b11 = 0 0 0 0 0 0 1 1 -> keeps the bottom 2 boxes, erases the rest.
+		 *
+		 *   magHigh = (rxBytes[1] >> 0) & 0b11
+		 *     rxBytes[1] >> 0 : A5 A4 A3 A2 A1 A0 M3 M2
+		 *     & 0b11          :  0  0  0  0  0  0 M3 M2   (angle bits erased)
+		 *
+		 *   magLow = (rxBytes[2] >> 6) & 0b11
+		 *     rxBytes[2] >> 6 :  0  0  0  0  0  0 M1 M0   (CRC bits fall off)
+		 *     & 0b11          :  0  0  0  0  0  0 M1 M0
+		 *
+		 *   magStatus_ = (magHigh << 2) | magLow
+		 *     magHigh << 2    :  0  0  0  0 M3 M2  0  0
+		 *     magLow          :  0  0  0  0  0  0 M1 M0
+		 *     OR (|)          :  0  0  0  0 M3 M2 M1 M0
+		 */
+		uint8_t magHigh = static_cast<uint8_t>((rxBytes[1] >> 0) & 0b11);
+		uint8_t magLow = static_cast<uint8_t>((rxBytes[2] >> 6) & 0b11);
+		magStatus_ = static_cast<uint8_t>((magHigh << 2) | magLow);
+
 		if (firstRead_) {
 			prevCount_ = rawCount_;
 			totalCount_ = rawCount_;
@@ -87,6 +120,27 @@ HAL_StatusTypeDef Encoder::update() {
 	return status;
 }
 
+uint8_t Encoder::computeCrc(uint32_t data18) const {
+	//shift 18 bit data left 6 to make room for the 6 bit CRC
+	//Work is the number being divided. its the row that is getting operated on
+	uint32_t work = data18 << 6;
+	//start from the left side (23rd bit) and count down to check for 1
+	for(int i = 23; i >= 6; i--) {
+		//slide the entire work to the right by i, (basically making everything fall off the
+		//right edge except the ith bit so that its at position 0. Since it's at position 0,
+		//if you and it with 1, you will get 1 if there is a 1 and 0 if there is a 0. If
+		//there is a 1, that means you need to perform the operation
+		if(((work >> i) & 0b1) == 1) {
+			//XOR work with the divisor shifted left to the left most 1, then reassign the
+			//divided work
+			work = work ^ (CRC_DIVISOR << (i-6));
+		}
+	}
+	//return work anded with the mask so you keep only the last 6 bits and erase everything
+	//to the left of them. (since only the last 6 bits are the CRC)
+	return static_cast<uint8_t>(work & 0b111111);
+}
+
 uint16_t Encoder::getRawCount() const {
 	return rawCount_;
 }
@@ -105,4 +159,9 @@ float Encoder::getRawVelocity() const {
 
 float Encoder::getVelocity() const {
 	return filteredVelocity_;
+}
+
+uint8_t Encoder::getMagStatus() const
+{
+	return magStatus_;
 }

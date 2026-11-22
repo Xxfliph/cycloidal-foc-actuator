@@ -16,7 +16,7 @@
 "csk" = 0.6
 "peg_d" = 3.0
 "plug_d" = 8.6
-"peg_clr" = 0.3
+"peg_clr" = 0.18
 "m3_clr" = 3.4
 "m3_head" = 6.2
 "pin_press" = 3.2

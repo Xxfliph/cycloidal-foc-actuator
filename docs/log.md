@@ -859,3 +859,95 @@ One entry per work session. Write what you did, what broke, and what you decided
 - C++: a variable name can be created once per level of braces; after that, reuse it (`len = ...`, no `int`).
 - A function isn't only for reuse: bootDriver() runs once, but it gives failure handling one place and
   gives the sequence a name.
+
+## Nov 20–21: Full-assembly tests, tracking down the output binding, final profile chosen
+
+### Setup
+- New housing_rear printed (pin holes 3.35, cover inserts at r31) + disc pairs: 2 dots = 0.00/0.7 holes,
+  4 dots = 0.00/0.9, 6 dots = +0.05/0.8. Same printer + black filament.
+- 8 inserts in the new housing_rear (4 top for the front housing, 4 bottom for the cover). Motor + cam_1 +
+  bearing lifted out of the old housing as one unit (4 M2.5 from underneath) and dropped into the new one.
+- Cranking: hex/screwdriver on cam_2's M3, clockwise only (anticlockwise unscrews it). Target effort =
+  fingertip twist on a screwdriver handle: 0.02 N·m input ≈ 1.6 N at a 12.5 mm handle radius.
+
+### Test 1: hand-held vs screwed-down front housing
+- Hand-held: turned but stiff, and the front housing shifted under my hand. The 6806 + carrier live in the
+  front housing, so every time it moves the carrier goes off the cam axis. Hand-held results only a guide.
+
+### Test 2: disc pairs with front housing screwed down + carrier
+- 2 dots (0.00 / 0.7): won't turn. 6 dots (+0.05 / 0.8): won't turn. 4 dots (0.00 / 0.9): turns, stiff.
+- Bigger output holes help but even 0.9 (~0.3 mm spare per side) isn't enough → something systematic,
+  not random print error.
+
+### Test 3: isolate the problem (one change at a time)
+- No carrier, front housing screwed down → mesh spins fine.
+- Carrier + disc A only + front housing → easy.
+- Both discs + carrier, no front housing → turns, but the carrier tilts at the same point every motor turn.
+- Conclusion: disc A alone is fine; adding disc B makes the two discs disagree on where the dowels are,
+  and the dowels get squeezed between them.
+- Why both discs must agree: if disc B's centre is off by δ, its hole-to-dowel distance swings between
+  1.5 − δ and 1.5 + δ every motor turn, so each hole needs r ≥ 1.5 + 1.5 + δ. With the front housing on,
+  the carrier can't move → friction/jam. Without it → the carrier gets shoved over → periodic tilt.
+
+### Test 4: is it cam_2?
+- Theory: cam_2 can slide ~0.1–0.15 on its pegs (Ø3.3 holes on Ø3.0 pegs, peg_clr 0.3) before the M3
+  clamps it, putting disc B off-centre.
+- Checked new_cam_1/new_cam_2 STLs: big peg in big hole → boss A +1.5, boss B −1.5, exactly opposite.
+  Design is correct; only the real-world slop is in question.
+- Bench test with cam_2's M3 removed (no front housing): turned better and tilted less at first; on a
+  second check the tilt looked about the same. Inconclusive.
+- Backdriving the output by hand (hex key in a carrier insert hole) is useless as a test: 10× the friction
+  through a short lever, dry. Even a healthy printed cycloid is hard to backdrive that way.
+- Some carrier tilt with no front housing is normal anyway: disc A pushes the dowels low, disc B high, in
+  opposite directions (a couple). The 6806 in the front housing exists to take it.
+
+### Test 5: the pinch is at a fixed spot
+- Pulling the carrier out: 1–2 dowels stick, then free up after turning the rotor. If the holes were just
+  too small everywhere, every dowel would be tight all the time → it's a position error, not size.
+- The pinch always happens at one place on the housing (bottom right), whatever dowel is there. A cam_2
+  error would move round with the motor, so this points at something fixed to the housing.
+- 3 ring pins at bottom right lock up during the pinch while the rest stay free (the squeeze reacts into
+  the pins there).
+- One ring pin was sticky: swapped some pins → the +0.05 pair then ran almost smoothly all the way round.
+  0.00 pair: smooth for about half a turn, resistance on the other half → pin circle slightly off-centre
+  from the motor axis (or loose pins), absorbed by the extra +0.05.
+- Disc mesh is 180° by design (checked). Quick visual check: front housing off, lower disc sticks out
+  ~3 mm on one side, upper disc on the opposite side.
+
+### Test 6: ring pins move in their holes
+- Measured neighbouring ring pins outside-to-outside (design 2 · 27 · sin(180°/11) + 3 = 18.22):
+  free 17.8–17.9 (one 18.0), loaded and stiff 18.1–18.2 → pins shift 0.2–0.4 mm.
+- Each pin is only held ~4.5 mm at each end (rear 4.75, front ~4.6). The middle ~11 mm spans the disc stack
+  (5 + 0.5 + 5); the cavity height is set by the discs and can't shrink, and the 20 mm pins can't go deeper.
+- The pins don't spin anyway (the disc slides on them), so there's no reason for slip holes. Fix them.
+- Tape test: one layer of tape on both pin ends, only inside the holes (the discs touch the bare middle,
+  so no added friction).
+  - Full assembly, +0.05 / 0.8 pair: can't turn.
+  - Same taped pins, no carrier: mesh spins freely.
+  → Mesh is fine with rigid pins; the output holes are the limit. The loose pins had been hiding part of
+    the error by shuffling.
+
+### Conclusions
+- Final disc profile: +0.05 (pin radius 1.55) for now. +0.10 felt smoothest of all; decide after grease
+  (+0.10 costs only ~0.4° extra backlash).
+- Output holes need to be bigger than 0.9. Backlash cost: total play ≈ 2c / 18.5 mm rad (c = spare per
+  side): 0.8 → ~1.5°, 1.0 → ~2°, 1.2 → ~2.8°. Bigger holes also mean fewer dowels share the load and
+  thinner disc walls (~1.9 mm at Ø7.1), so keep them as small as works.
+- Keeping the tape on the pin ends for v1. If the pinch comes back, reprint housing_front with 3.2 press
+  holes (only the front; the rear stays 3.35 slip).
+
+### Changes / next plate
+- vars.txt: boss_17 17.15 (confirmed), peg_clr 0.3 → 0.18 (Ø3.18 / Ø2.58), out_hole_clr testing 1.0 / 1.2.
+- Plate (all checked from the STLs): 2 × (+0.05, Ø7.0, 1 dot), 2 × (+0.05, Ø7.2, 2 dots), cam_2 (peg 0.18,
+  boss-down). Old 6-dot pair = +0.05 / 0.8.
+
+### Lessons
+- Change one thing per test. Mesh only → one disc + carrier → both discs found the problem in three tries.
+- Where the problem happens is a clue: something that turns with the motor gives a pinch that moves round;
+  something fixed to the housing gives a pinch in one spot.
+- "Too small everywhere" and "off-position" feel different: the first is tight all the time, the second
+  only at certain angles.
+- A clearance that looks fine can be hidden by parts that shuffle (loose pins). Hold them still before judging.
+- Pick a "good enough" line for v1: smooth by hand, backlash measured and written down, weak spots on a
+  v2 list. Don't chase the last 0.2°.
+- Backdriving a reducer by hand isn't a friction test; drive it from the input.

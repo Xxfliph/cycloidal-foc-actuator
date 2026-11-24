@@ -4,7 +4,7 @@
 #include <cstdio>
 #include "foc_controller.h"
 #include "motor_driver.h"
-//#include "encoder.h"
+#include "encoder.h"
 #include "PIController.h"
 #include "usart.h"
 #include "Drv8316.h"
@@ -191,9 +191,11 @@ void app_main() {
 	/*
 	 * Drv8316 class configures the chip and reads its status. It talks through SPI
 	 * MotorDriver class runs the power stage: PWM duties + on/off. It talks through TIM1 and the GPIO pins
+	 * Encoder class reads the MT6701 angle + magnet status and checks the CRC. It talks through SPI2.
 	 */
 	Drv8316 myDrv8316(&hspi3, DRV_CS_GPIO_Port, DRV_CS_Pin);
 	MotorDriver myMotorDriver(&htim1, DRV_OFF_GPIO_Port, DRV_OFF_Pin, PHASE_EN_GPIO_Port, PHASE_EN_Pin);
+	Encoder myEncoder(&hspi2, ENC_CS_GPIO_Port, ENC_CS_Pin);
 
 	char msg[128];
 
@@ -213,5 +215,8 @@ void app_main() {
 		HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
 		counter++;
 
+		HAL_StatusTypeDef encStatus = myEncoder.update();
+		len = snprintf(msg, sizeof(msg), "enc status=%d count=%d mag=%d\r\n", static_cast<int>(encStatus), myEncoder.getRawCount(), myEncoder.getMagStatus());
+		HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
 	}
 }

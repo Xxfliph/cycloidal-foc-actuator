@@ -328,6 +328,55 @@ HAL_StatusTypeDef readVbus(float& vbus) {
 	return HAL_OK;
 }
 
+/*
+ * Measures each phase's current-sense reading at ZERO current, so later:
+ *   real current = (reading - offset) x ~1.3 mA per count
+ * Why: zero isn't exactly 2085 counts (amp error, AVDD 3.30 V vs ADC ref 3.24 V).
+ *   A 15-count error would show 20 mA that isn't there.
+ * SOx = AVDD/2 + 0.6 V/A x I  ->  0 A = 1.65 V = ~2085 counts.
+ * Call after bootDriver(): duty 0 + PHASE_EN high = all low-side FETs on = zero current.
+ * Averages 64 readings (3.2 ms). Fails if any phase is more than 200 counts (~0.26 A) off.
+ * offsets[3] is filled in directly (an array parameter writes into the caller's array).
+ */
+HAL_StatusTypeDef measureCurrentOffsets(float offsets[3]) {
+	static constexpr int NUM_SAMPLES = 64;
+	static constexpr float EXPECTED_ZERO = 2085.0f;   // 1.65 V (AVDD/2) / 3.24 V x 4095
+	static constexpr float MAX_ERROR = 200.0f;         // counts, ~0.26 A
+
+	// TIM1 channel 4 (no pin) fires the ADC at count 4249, near the PWM peak,
+	// where all low-side FETs are on. Keeps firing every 50 us from now on.
+	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, __HAL_TIM_GET_AUTORELOAD(&htim1) - 1);
+
+	// ADC: convert SOA, SOB, SOC (injected ranks 1-3) every time TIM1 triggers.
+	if (HAL_ADCEx_InjectedStart(&hadc1) != HAL_OK) {
+		return HAL_ERROR;
+	}
+	if (HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4) != HAL_OK) {
+		return HAL_ERROR;
+	}
+
+	uint32_t sums[3] = {0,0,0};
+
+	// Add up 64 fresh sets. Poll waits for all 3 (needs "End of sequence" in CubeMX).
+	for(int i = 0; i < NUM_SAMPLES; i++) {
+		if (HAL_ADCEx_InjectedPollForConversion(&hadc1, 5) != HAL_OK) {
+			return HAL_ERROR;
+		}
+		sums[0] += HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_1);
+		sums[1] += HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_2);
+		sums[2] += HAL_ADCEx_InjectedGetValue(&hadc1, ADC_INJECTED_RANK_3);
+	}
+
+	// Average AFTER all samples, then check each phase is near 2085.
+	for(int j = 0; j < 3; j++) {
+		offsets[j] = sums[j] / static_cast<float>(NUM_SAMPLES);
+		if (offsets[j] < EXPECTED_ZERO - MAX_ERROR || offsets[j] > EXPECTED_ZERO + MAX_ERROR) {
+			return HAL_ERROR;
+		}
+	}
+
+	return HAL_OK;
+}
 
 void app_main() {
 
@@ -385,9 +434,17 @@ void app_main() {
 		faultLatched = true;
 	}
 
-	// Calibrate after arming: if the DRV8316 faults during the 1 s hold, the nFAULT
-	// interrupt already shuts it down. On failure: driver off, stop forever, keep the
-	// watchdog fed so the chip doesn't reset and try again on its own.
+	float currentOffsets[3] = {0.0f, 0.0f, 0.0f};
+	if (measureCurrentOffsets(currentOffsets) != HAL_OK) {
+		myMotorDriver.disable();
+		int len = snprintf(msg, sizeof(msg), "current offsets failed, driver off\r\n");
+		HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+		while (true) {
+			HAL_IWDG_Refresh(&hiwdg);
+		}
+	}
+	int len = snprintf(msg, sizeof(msg), "offsets A=%d B=%d C=%d\r\n", static_cast<int>(currentOffsets[0]), static_cast<int>(currentOffsets[1]), static_cast<int>(currentOffsets[2]));
+	HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
 
 	if (RUN_MOTOR == false) {
 		int counter = 0;
@@ -415,6 +472,9 @@ void app_main() {
 		}
 	}
 
+	// Calibrate after arming: if the DRV8316 faults during the 1 s hold, the nFAULT
+	// interrupt already shuts it down. On failure: driver off, stop forever, keep the
+	// watchdog fed so the chip doesn't reset and try again on its own.
 	if (calibrate(myFocController, myMotorDriver, myEncoder) != HAL_OK) {
 		myMotorDriver.disable();
 		int len = snprintf(msg, sizeof(msg), "cal failed, driver off\r\n");

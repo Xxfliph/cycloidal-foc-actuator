@@ -10,6 +10,7 @@
 #include "Drv8316.h"
 #include "spi.h"
 #include "iwdg.h"
+#include "adc.h"
 
 /*
  * Two flags shared between the nFAULT interrupt and the main code.
@@ -57,77 +58,6 @@ extern "C" void HAL_GPIO_EXTI_Callback(uint16_t pin)
 	DRV_OFF_GPIO_Port->BSRR = DRV_OFF_Pin;
 	PHASE_EN_GPIO_Port->BSRR = PHASE_EN_Pin << 16;
 	faultLatched = true;
-}
-
-void focVelocityTest(void)
-{
-	//declarations and object creation
-	FocController myFocController(15.0f, 3.0f, 11);
-	MotorDriver myMotorDriver(&htim1, DRV_OFF_GPIO_Port, DRV_OFF_Pin, PHASE_EN_GPIO_Port, PHASE_EN_Pin);
-	PIController myPIController(0.3f, 3.0f, 2.0f);
-	//Encoder myEncoder(&hi2c1, 0x06);
-
-	myMotorDriver.start();
-	myMotorDriver.enable();
-
-	CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
-	DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
-
-
-	float dutyArray[3];
-
-
-
-	//print stuff
-	char msg[128];
-	int n = 0;
-
-
-	//calibration code
-	static constexpr float HOLD_VD = 2.5f;
-	myFocController.computeDuties(HOLD_VD, 0.0f, 0.0f, dutyArray);
-	myMotorDriver.setDuty(dutyArray);
-	HAL_Delay(1000);
-	float calOffset = 0.0f;
-	myFocController.setCalibration(calOffset, 1);
-	myPIController.reset();
-
-	//variable declarations for FOC control
-	uint8_t failedReads = 0;
-	uint8_t printCounter = 0;
-	static constexpr float VQ = 1.0f;
-	static constexpr bool USE_VELOCITY_LOOP = true;
-	static constexpr float STEP_VEL = 10.0f;
-	static constexpr uint32_t STEP_DELAY_MS = 3000;
-	float vq = 0.0f;
-
-	//timer variable declaration
-	uint32_t newTime = 0;
-	uint32_t oldTime = DWT->CYCCNT;
-	uint32_t startMs = HAL_GetTick();
-	static constexpr uint32_t CYCLES_PER_MS = 170000;
-	static constexpr float CYCLES_PER_SECOND = 170000000.0f;
-	float target = 0.0f;
-
-	while (true)
-	{
-		newTime = DWT->CYCCNT;
-		uint32_t elapsed = newTime-oldTime;
-		if (elapsed > CYCLES_PER_MS) {
-			oldTime = newTime;
-
-			if (HAL_GetTick()-startMs <	STEP_DELAY_MS) {
-				target = 0.0f;
-			}
-			else {
-				target = STEP_VEL;
-			}
-			float dt = elapsed/CYCLES_PER_SECOND;
-
-			//vq = myPIController.update(error, dt);
-		}
-
-	}
 }
 
 /*
@@ -321,10 +251,103 @@ HAL_StatusTypeDef calibrate(FocController& foc, MotorDriver& motor, Encoder& enc
 	return HAL_OK;
 }
 
+/*
+ * Waits until the UART has finished sending a background (interrupt-driven) print.
+ *
+ * Why: HAL sends ONE line at a time, with no queue. HAL_UART_Transmit (blocking) first
+ * checks huart1.gState. If a background line is still going out, it returns HAL_BUSY
+ * right away and sends NOTHING -> the message is lost, not delayed.
+ * The messages that matter most (why the motor stopped) are blocking prints,
+ * so they wait here first.
+ *
+ * | huart1.gState           | meaning                             |
+ * |-------------------------|-------------------------------------|
+ * | HAL_UART_STATE_READY    | nothing being sent -> safe to print |
+ * | anything else (BUSY_TX) | a line is still going out           |
+ *
+ * Longest wait: one plot line, ~32 chars x 87 us = ~2.8 ms (well under the 2 s watchdog).
+ * Only called on the way to a stop, never in the normal control path.
+ */
+void waitForUart() {
+	while (huart1.gState != HAL_UART_STATE_READY) {
+	}
+}
+
+/*
+* Checked at the start of every pass. The callback already turned the driver off;
+* this part does the slow work the interrupt can't do:
+* 1. disable() -> sets the same pins through the class, so the object matches the hardware
+* 2. print that a fault happened
+* 3. read IC Status (register 0) over SPI3 and print each flag (OT, OVP, OCP, ...)
+*    -> tells us WHICH fault. NPOR is inverted (1 = normal).
+* 4. stop forever. The driver stays off until a reset.
+*/
+void stopOnFault(Drv8316& drv, MotorDriver& motor) {
+	waitForUart();   // a plot line may still be sending -> wait, or the fault message is refused and lost
+	char msg[128];
+	motor.disable();
+	int len = snprintf(msg, sizeof(msg), "nFAULT: driver off (latched)\r\n");
+	HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+	uint8_t faults = 0;
+	if (drv.readFaults(faults) == HAL_OK) {
+		printFaults(faults);
+	}
+	else {
+		len = snprintf(msg, sizeof(msg), "read faults failed\r\n");
+		HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+	}
+	while(true) {
+		HAL_IWDG_Refresh(&hiwdg);
+	}
+		
+}
+
+/*
+ * Measures the motor supply voltage (VM) through the ADC. (Voltage, not current.)
+ * Why: computeDuties() divides by vbus. Wrong vbus = wrong motor voltage
+ *   (code says 12 V, real 15 V -> ask 1.0 V, get 1.25 V).
+ * PA3 sees VM / 11 (100k/10k divider). ADC: 0..4095 counts = 0..3.24 V (measured 3V3).
+ *   vbus = counts / 4095 x 3.24 x 11   (12 V -> ~1379 counts)
+ * Run HAL_ADCEx_Calibration_Start() once at boot first.
+ */
+HAL_StatusTypeDef readVbus(float& vbus) {
+	static constexpr float ADC_MAX_COUNTS = 4095.0f;  // 12-bit
+	static constexpr float VDDA_VOLTS = 3.24f;        // ADC reference = 3V3 rail, measured on board A
+	static constexpr float VM_DIVIDER = 11.0f;        // R2 100k / R3 10k
+
+	if (HAL_ADC_Start(&hadc1) != HAL_OK) {
+		return HAL_ERROR;
+	}
+	if (HAL_ADC_PollForConversion(&hadc1, 5) != HAL_OK) {
+		return HAL_ERROR;
+	}
+
+	uint32_t counts = HAL_ADC_GetValue(&hadc1);
+	vbus = counts / ADC_MAX_COUNTS * VDDA_VOLTS * VM_DIVIDER;
+
+	return HAL_OK;
+}
+
+
 void app_main() {
 
 	CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;   // turn on the debug/trace block DWT lives in
 	DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;              // start the cycle counter
+
+	static constexpr bool RUN_MOTOR = false;
+
+	char msg[128];
+
+	// ADC self-calibration: measures the ADC's own small zero error (a few counts) and
+	// corrects every later reading. Must run once, before the ADC is first started.
+	// Covers all channels: vbus (regular) and SOA/SOB/SOC (injected).
+	if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) != HAL_OK) {
+		int len = snprintf(msg, sizeof(msg), "adc cal failed\r\n");
+		HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+		while (true) {
+			HAL_IWDG_Refresh(&hiwdg);
+		}
+	}
 
 	/*
 	* Drv8316 class configures the chip and reads its status. It talks through SPI
@@ -336,8 +359,9 @@ void app_main() {
 	MotorDriver myMotorDriver(&htim1, DRV_OFF_GPIO_Port, DRV_OFF_Pin, PHASE_EN_GPIO_Port, PHASE_EN_Pin);
 	Encoder myEncoder(&hspi2, ENC_CS_GPIO_Port, ENC_CS_Pin);
 	FocController myFocController(12.0f, 3.0f, 11);
+	PIController myPIController(0.3f, 3.0f, 2.0f);   // (kp, ki, outLimit) = your tuned dev-rig gains
 
-	char msg[128];
+	
 
 	if(bootDriver(myDrv8316, myMotorDriver) != HAL_OK) {
 		myMotorDriver.disable();
@@ -364,6 +388,33 @@ void app_main() {
 	// Calibrate after arming: if the DRV8316 faults during the 1 s hold, the nFAULT
 	// interrupt already shuts it down. On failure: driver off, stop forever, keep the
 	// watchdog fed so the chip doesn't reset and try again on its own.
+
+	if (RUN_MOTOR == false) {
+		int counter = 0;
+		while (true) {
+			if (faultLatched == true) {
+				stopOnFault(myDrv8316, myMotorDriver);
+			}
+			HAL_IWDG_Refresh(&hiwdg);
+
+			HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+			HAL_Delay(1000);
+
+			int len = snprintf(msg, sizeof(msg), "blink %d\r\n", counter);
+			HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+			counter++;
+
+			HAL_StatusTypeDef encStatus = myEncoder.update();
+			len = snprintf(msg, sizeof(msg), "enc status=%d count=%d mag=%d\r\n", static_cast<int>(encStatus), myEncoder.getRawCount(), myEncoder.getMagStatus());
+			HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+
+			float vbus = 0.0f;
+			HAL_StatusTypeDef vbusStatus = readVbus(vbus);
+			len = snprintf(msg, sizeof(msg), "vbus status=%d mV=%d\r\n", static_cast<int>(vbusStatus), static_cast<int>(vbus * 1000.0f));
+			HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+		}
+	}
+
 	if (calibrate(myFocController, myMotorDriver, myEncoder) != HAL_OK) {
 		myMotorDriver.disable();
 		int len = snprintf(msg, sizeof(msg), "cal failed, driver off\r\n");
@@ -372,46 +423,112 @@ void app_main() {
 			HAL_IWDG_Refresh(&hiwdg);
 		}
 	}
+	
+	//variable declarations for FOC control
+	myPIController.reset();
+	float dutyArray[3];
+	uint8_t failedReads = 0;
+	static constexpr uint8_t MAX_FAILED_READS = 20;
+	static constexpr float VQ = 1.0f;
+	static constexpr bool USE_VELOCITY_LOOP = false;
+	static constexpr float STEP_VEL = 10.0f;
+	static constexpr uint32_t STEP_DELAY_MS = 3000;
+	float vq = 0.0f;
 
-	int counter = 0;
-	while (true) {
-		/*
-		 * Checked at the start of every pass. The callback already turned the driver off;
-		 * this part does the slow work the interrupt can't do:
-		 * 1. disable() -> sets the same pins through the class, so the object matches the hardware
-		 * 2. print that a fault happened
-		 * 3. read IC Status (register 0) over SPI3 and print each flag (OT, OVP, OCP, ...)
-		 *    -> tells us WHICH fault. NPOR is inverted (1 = normal).
-		 * 4. stop forever. The driver stays off until a reset.
-		 */
+	//timer variable declaration
+	uint32_t newTime = 0;
+	uint32_t oldTime = DWT->CYCCNT;
+	uint32_t startMs = HAL_GetTick();
+	static constexpr uint32_t CYCLES_PER_MS = 170000;
+	static constexpr float CYCLES_PER_SECOND = 170000000.0f;
+	float target = 0.0f;
+
+	/*
+	* Serial Plotter output without freezing the control loop.
+	*
+	* Blocking print (HAL_UART_Transmit): CPU waits for every char -> 32 chars = 2.8 ms frozen.
+	* Background print (HAL_UART_Transmit_IT): CPU hands over char 1 and returns at once.
+	*   UART sends it (87 us) -> interrupt -> HAL's handler hands over the next char (~1 us)
+	*   -> ... until the line is done -> gState goes back to READY.
+	*   Loop loses ~32 us total, spread out, instead of 2.8 ms in one go.
+	*
+	* Rules:
+	* 1. plotMsg is used ONLY by this print. HAL reads from it in the background while sending,
+	*    so writing a new line into it early would mix old and new characters.
+	* 2. Only start a print when gState == READY (previous line finished).
+	* 3. Every 20 ms: 2.8 ms to send << 20 ms, so the UART is always free by the next one.
+	*/
+	char plotMsg[64];                                  // only used by the background print
+	static constexpr uint32_t PRINT_INTERVAL_MS = 20;  // 50 lines per second
+	uint32_t lastPrintMs = HAL_GetTick();
+
+	while (true)
+	{
 		if (faultLatched == true) {
-			myMotorDriver.disable();
-			int len = snprintf(msg, sizeof(msg), "nFAULT: driver off (latched)\r\n");
-			HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
-			uint8_t faults = 0;
-			if (myDrv8316.readFaults(faults) == HAL_OK) {
-				printFaults(faults);
-			}
-			else {
-				len = snprintf(msg, sizeof(msg), "read faults failed\r\n");
-				HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
-			}
-			while(true) {
-				HAL_IWDG_Refresh(&hiwdg);
-			}
+			stopOnFault(myDrv8316, myMotorDriver);
 		}
 
 		HAL_IWDG_Refresh(&hiwdg);
 
-		HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
-		HAL_Delay(1000);
+		newTime = DWT->CYCCNT;
+		uint32_t elapsed = newTime-oldTime;
+		if (elapsed > CYCLES_PER_MS) {
+			oldTime = newTime;
 
-		int len = snprintf(msg, sizeof(msg), "blink %d\r\n", counter);
-		HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
-		counter++;
+			if (HAL_GetTick()-startMs <	STEP_DELAY_MS) {
+				target = 0.0f;
+			}
+			else {
+				target = STEP_VEL;
+			}
+			float dt = elapsed/CYCLES_PER_SECOND;
+			float error = target - myEncoder.getVelocity();
+			vq = myPIController.update(error, dt);
+		}
 
-		HAL_StatusTypeDef encStatus = myEncoder.update();
-		len = snprintf(msg, sizeof(msg), "enc status=%d count=%d mag=%d\r\n", static_cast<int>(encStatus), myEncoder.getRawCount(), myEncoder.getMagStatus());
-		HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+
+
+
+		if (myEncoder.update() == HAL_OK) {
+			failedReads = 0;
+			float thetaE = myFocController.electricalAngle(myEncoder.getAngle());
+			if (USE_VELOCITY_LOOP) {
+				myFocController.computeDuties(0.0f, vq, thetaE, dutyArray);
+			}
+			else {
+				myFocController.computeDuties(0.0f, VQ, thetaE, dutyArray);
+			}
+			myMotorDriver.setDuty(dutyArray);
+		}
+		else {
+            failedReads++;
+		}
+		if (failedReads > MAX_FAILED_READS) {
+			myMotorDriver.disable();
+			myPIController.reset();
+
+				waitForUart();   // same reason: make sure "encoder failed" actually gets sent
+			
+			int len = snprintf(msg, sizeof(msg), "encoder failed, driver off\r\n");
+			HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+			while (true) {
+				HAL_IWDG_Refresh(&hiwdg);
+			}
+		}
+
+		// Every 20 ms, if the previous line has finished: write a new line into plotMsg,
+		// start sending it in the background, and carry on with the loop straight away.
+		// With USE_VELOCITY_LOOP = false, vq is the PI's output, not the applied VQ -> ignore it.
+		if (HAL_GetTick() - lastPrintMs >= PRINT_INTERVAL_MS) {
+			if (huart1.gState == HAL_UART_STATE_READY) {
+				lastPrintMs = HAL_GetTick();
+				int len = snprintf(plotMsg, sizeof(plotMsg), "target:%d vel:%d vq:%d\r\n",
+						static_cast<int>(target * 1000.0f),
+						static_cast<int>(myEncoder.getVelocity() * 1000.0f),
+						static_cast<int>(vq * 1000.0f));
+				HAL_UART_Transmit_IT(&huart1, reinterpret_cast<uint8_t*>(plotMsg), len);
+			}
+		}
 	}
 }
+

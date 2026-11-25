@@ -20,10 +20,11 @@
 "m3_clr" = 3.4
 "m3_head" = 6.2
 "pin_press" = 3.2
-"pin_slip" = 3.35
+"pin_slip" = 3.3
 "hub_30" = 30.20
 "hub_short" = 0.2
 "m3_tap" = 2.8
 "rear_plate_t" = 2
 "motor_ring" = 40.4
 "plug_shaft_d" = 8.8
+"skirt_clr" = 0.2

@@ -9,8 +9,55 @@
 #include "usart.h"
 #include "Drv8316.h"
 #include "spi.h"
+#include "iwdg.h"
 
+/*
+ * Two flags shared between the nFAULT interrupt and the main code.
+ *
+ * | flag         | set to true by                         | read by           | meaning when true                |
+ * |--------------|----------------------------------------|-------------------|----------------------------------|
+ * | faultArmed   | app_main, after bootDriver() succeeds  | the callback      | real faults may now shut down    |
+ * | faultLatched | the callback, or the level check       | the blink loop    | a fault happened, driver is off  |
+ *
+ * volatile = an interrupt can change these, so the compiler must read them
+ * from RAM every time instead of reusing an old copy kept in a CPU register.
+ * Nothing ever sets them back to false: only a reset clears a fault ("latched").
+ */
+volatile bool faultArmed = false;    // set by app_main after "drv ready"; read by the callback
+volatile bool faultLatched = false;  // set by the callback (or the level check); read by the loop
 
+/*
+ * Runs automatically when PB11 (DRV_FAULT = DRV8316 nFAULT) goes from high to low.
+ * Chain: PB11 falls -> EXTI15_10_IRQHandler (stm32g4xx_it.c) -> HAL_GPIO_EXTI_IRQHandler
+ *        (clears the pending bit) -> this function.
+ * ST's copy of this function is "weak" (empty), so the linker uses this one instead.
+ * extern "C" keeps the plain C name so ST's C code can find it.
+ *
+ * Steps:
+ * 1. pins 10-15 share one interrupt -> leave if it wasn't the fault pin
+ * 2. not armed yet -> leave (at boot, DRV_OFF high can pull nFAULT low: not a real fault)
+ * 3. driver off right now: DRV_OFF high (all 6 FETs off), PHASE_EN low (phases Hi-Z)
+ *    -> direct register writes, same as HardFault_Handler. myMotorDriver lives inside
+ *       app_main, so this function can't see it.
+ * 4. leave a note for the main loop
+ *
+ * No SPI here: the HAL timeout counts with HAL_GetTick(), which only goes up in the TIM6
+ * interrupt. TIM6 has the same priority (0), so it can't run while this one is running
+ * -> a timeout could never run out. The main loop reads the fault registers instead.
+ */
+extern "C" void HAL_GPIO_EXTI_Callback(uint16_t pin)
+{
+	if (pin != DRV_FAULT_Pin) {
+		return;
+	}
+	if (faultArmed == false) {
+		return;
+	}
+
+	DRV_OFF_GPIO_Port->BSRR = DRV_OFF_Pin;
+	PHASE_EN_GPIO_Port->BSRR = PHASE_EN_Pin << 16;
+	faultLatched = true;
+}
 
 void focVelocityTest(void)
 {
@@ -203,11 +250,54 @@ void app_main() {
 		myMotorDriver.disable();
 		int len =snprintf(msg, sizeof(msg), "boot failed, driver off\r\n");
 		HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
-		while (true) {}
+		while (true) {
+			HAL_IWDG_Refresh(&hiwdg);
+		}
+	}
+
+	/*
+	 * Arm the fault alarm. bootDriver() has finished: DRV_OFF is low and CLR_FLT has
+	 * cleared the boot faults, so from here on nFAULT low means a real fault.
+	 *
+	 * Level check: the interrupt only runs on a falling EDGE. If nFAULT was already low
+	 * before arming, it won't fall again, so no interrupt would ever come.
+	 * -> read the pin once now. GPIO_PIN_RESET = pin reads low = fault.
+	 */
+	faultArmed = true;
+	if (HAL_GPIO_ReadPin(DRV_FAULT_GPIO_Port, DRV_FAULT_Pin) == GPIO_PIN_RESET) {
+		faultLatched = true;
 	}
 
 	int counter = 0;
 	while (true) {
+		/*
+		 * Checked at the start of every pass. The callback already turned the driver off;
+		 * this part does the slow work the interrupt can't do:
+		 * 1. disable() -> sets the same pins through the class, so the object matches the hardware
+		 * 2. print that a fault happened
+		 * 3. read IC Status (register 0) over SPI3 and print each flag (OT, OVP, OCP, ...)
+		 *    -> tells us WHICH fault. NPOR is inverted (1 = normal).
+		 * 4. stop forever. The driver stays off until a reset.
+		 */
+		if (faultLatched == true) {
+			myMotorDriver.disable();
+			int len = snprintf(msg, sizeof(msg), "nFAULT: driver off (latched)\r\n");
+			HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+			uint8_t faults = 0;
+			if (myDrv8316.readFaults(faults) == HAL_OK) {
+				printFaults(faults);
+			}
+			else {
+				len = snprintf(msg, sizeof(msg), "read faults failed\r\n");
+				HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+			}
+			while(true) {
+				HAL_IWDG_Refresh(&hiwdg);
+			}
+		}
+
+		HAL_IWDG_Refresh(&hiwdg);
+
 		HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
 		HAL_Delay(1000);
 

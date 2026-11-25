@@ -20,6 +20,7 @@
 #include "main.h"
 #include "adc.h"
 #include "fdcan.h"
+#include "iwdg.h"
 #include "spi.h"
 #include "tim.h"
 #include "usart.h"
@@ -83,6 +84,7 @@ int main(void)
   //Debug block DBGMCU stops TIM1 while the core is halted (to handle the case where TIM1 keeps the motor on while the CPU is off since TIM1 is separate
   //hardware and keeps running). It also disables the outputs while halted, as if MOE (Main Output Enable) were cleared. MOE is TIM1's master switch
   __HAL_DBGMCU_FREEZE_TIM1();
+  __HAL_DBGMCU_FREEZE_IWDG();
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -100,6 +102,7 @@ int main(void)
   MX_SPI3_Init();
   MX_TIM1_Init();
   MX_USART1_UART_Init();
+  MX_IWDG_Init();
   /* USER CODE BEGIN 2 */
   app_main();
   /* USER CODE END 2 */
@@ -131,8 +134,9 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSI|RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  RCC_OscInitStruct.LSIState = RCC_LSI_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLM = RCC_PLLM_DIV2;

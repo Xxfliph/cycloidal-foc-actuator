@@ -230,19 +230,112 @@ HAL_StatusTypeDef bootDriver(Drv8316& drv, MotorDriver& motor) {
 	return HAL_OK;
 }
 
+/*
+ * Finds the encoder reading that lines up with electrical angle 0, so the FOC math
+ * knows where the motor's magnetic field really is.
+ * Called once in app_main, after the nFAULT alarm is armed (first time current flows).
+ * Returns HAL_OK, or HAL_ERROR after printing which step failed. No shutdown inside:
+ * app_main turns the driver off (same pattern as bootDriver).
+ *
+ * Steps:
+ * 1. hold vd = 2.5 V at thetaE = 0 for 1 s -> rotor snaps to a real electrical-0 spot
+ * 2. read the encoder (up to 3 tries)
+ * 3. check the magnet field strength
+ * 4. offset = electrical angle measured there -> save it with setCalibration
+ * 5. 0 V on the motor until the control loop starts
+ */
+HAL_StatusTypeDef calibrate(FocController& foc, MotorDriver& motor, Encoder& enc) {
+	int len = 0;
+	char msg[128];
+
+	static constexpr float HOLD_VD = 2.5f;
+	float duty[3];
+
+	// Step 1: all voltage on the d axis (vd = 2.5 V, vq = 0) at thetaE = 0.
+	// d = "direct": pulls the rotor to line up, makes no turning force once it's there.
+	// 2.5 V because 1.5 V left the rotor ~50 deg electrical off on the dev rig.
+	// (FocController's vLimit is 3.0 V, so 2.5 V isn't clamped.)
+	foc.computeDuties(HOLD_VD, 0.0f, 0.0f, duty);
+	motor.setDuty(duty);
+
+	// Refresh first so the 1 s hold starts with the full 2 s watchdog timeout.
+	// 1 s gives the rotor time to swing to the spot and stop.
+	HAL_IWDG_Refresh(&hiwdg);
+	HAL_Delay(1000);
+
+	/*
+	 * Step 2: read the encoder, up to 3 tries.
+	 * Why retry: SPI2 is only turned on inside its first transfer, so the clock line moves
+	 * from low to idle-high while CS is already low -> the first read after power-up may
+	 * fail its CRC. One bad read shouldn't fail calibration.
+	 * The loop stops early as soon as readOk becomes true (the "&& !readOk" part).
+	 */
+	bool readOk = false;
+	for (int i = 0; i < 3 && !readOk; i++) {
+		if (enc.update() == HAL_OK) {
+			readOk = true;
+		}
+	}
+
+	// All 3 tries failed -> the stored angle is not a real reading -> don't calibrate with it.
+	// Checked before the magnet status, because a failed read leaves that stale too.
+	if (readOk == false) {
+		len = snprintf(msg, sizeof(msg), "cal failed: encoder read\r\n");
+		HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+		return HAL_ERROR;
+	}
+
+	/*
+	 * Step 3: field strength = magnet status bits 1-0 (Mg1 Mg0).
+	 * | Mg1 Mg0 | meaning        |
+	 * |   0 0   | normal  -> OK  |
+	 * |   0 1   | too strong     |
+	 * |   1 0   | too weak (gap) |
+	 * Shift down by 0, then & 0b11 keeps only bits 1-0 (bit 3 loss-of-track, bit 2 button ignored).
+	 * Anything but 0 -> the angle can't be trusted.
+	 */
+	if (((enc.getMagStatus() >> 0) & 0b11) != 0) {
+		len = snprintf(msg, sizeof(msg), "cal failed: magnet status\r\n");
+		HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+		return HAL_ERROR;
+	}
+
+	/*
+	 * Step 4: offset_ is still 0 here, so electricalAngle() gives mech * 11 * direction, wrapped to 0..2pi.
+	 * That value IS the offset: after setCalibration, this same rotor position gives thetaE = 0.
+	 * Example: mech 1.0 rad -> 11.0 - 6.2832 = 4.7168 -> later 11.0 - 4.7168 = 6.2832 -> wraps to 0.
+	 * direction = 1 is a guess for the board (dev rig measured +1).
+	 * If the first spin jerks or runs away -> try -1.
+	 */
+	float offset = foc.electricalAngle(enc.getAngle());
+	foc.setCalibration(offset, 1);
+
+	// Step 5: vd = vq = 0 -> all three duties equal (0.5) -> no voltage across the windings
+	// -> rotor is free and no current flows until the control loop takes over.
+	foc.computeDuties(0.0f, 0.0f, 0.0f, duty);
+	motor.setDuty(duty);
+
+	len = snprintf(msg, sizeof(msg), "cal ok offset=%d\r\n", static_cast<int>(offset * 1000.0f));
+	HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+
+	return HAL_OK;
+}
+
 void app_main() {
 
 	CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;   // turn on the debug/trace block DWT lives in
 	DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;              // start the cycle counter
 
 	/*
-	 * Drv8316 class configures the chip and reads its status. It talks through SPI
-	 * MotorDriver class runs the power stage: PWM duties + on/off. It talks through TIM1 and the GPIO pins
-	 * Encoder class reads the MT6701 angle + magnet status and checks the CRC. It talks through SPI2.
-	 */
+	* Drv8316 class configures the chip and reads its status. It talks through SPI
+	* MotorDriver class runs the power stage: PWM duties + on/off. It talks through TIM1 and the GPIO pins
+	* Encoder class reads the MT6701 angle + magnet status and checks the CRC. It talks through SPI2.
+	* FocController class is pure math (park/Clarke/SVPWM to create duties). No hardware. (vbus, vlimit, polePairs), vbus must match the real supply
+	*/
 	Drv8316 myDrv8316(&hspi3, DRV_CS_GPIO_Port, DRV_CS_Pin);
 	MotorDriver myMotorDriver(&htim1, DRV_OFF_GPIO_Port, DRV_OFF_Pin, PHASE_EN_GPIO_Port, PHASE_EN_Pin);
 	Encoder myEncoder(&hspi2, ENC_CS_GPIO_Port, ENC_CS_Pin);
+	FocController myFocController(12.0f, 3.0f, 11);
 
 	char msg[128];
 
@@ -266,6 +359,18 @@ void app_main() {
 	faultArmed = true;
 	if (HAL_GPIO_ReadPin(DRV_FAULT_GPIO_Port, DRV_FAULT_Pin) == GPIO_PIN_RESET) {
 		faultLatched = true;
+	}
+
+	// Calibrate after arming: if the DRV8316 faults during the 1 s hold, the nFAULT
+	// interrupt already shuts it down. On failure: driver off, stop forever, keep the
+	// watchdog fed so the chip doesn't reset and try again on its own.
+	if (calibrate(myFocController, myMotorDriver, myEncoder) != HAL_OK) {
+		myMotorDriver.disable();
+		int len = snprintf(msg, sizeof(msg), "cal failed, driver off\r\n");
+		HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+		while (true) {
+			HAL_IWDG_Refresh(&hiwdg);
+		}
 	}
 
 	int counter = 0;

@@ -951,3 +951,240 @@ One entry per work session. Write what you did, what broke, and what you decided
 - Pick a "good enough" line for v1: smooth by hand, backlash measured and written down, weak spots on a
   v2 list. Don't chase the last 0.2°.
 - Backdriving a reducer by hand isn't a friction test; drive it from the input.
+
+## Nov 20–23: boards shipped, arrived, inspected, first power-off checks
+
+**Shipping and customs**
+- DHL Express from JLC (tracking 6696727170). Import charge C$43.45, paid online:
+  C$23.11 HST on the boards + C$20.34 DHL clearance fee (C$18 + HST). No duty on PCBs.
+  My earlier estimate (C$25–35) forgot DHL's own fee.
+- DHL couldn't deliver to the residence P.O. box, so I had it redirected to the
+  MKV front desk (where REV parcels go). Arrived Nov 23, earlier than the Nov 27 estimate.
+
+**Unboxing and arrival damage**
+- 2 assembled boards + 3 bare boards. Recorded the unboxing.
+- Board B arrived with C2 (10 µF 1206 bulk cap on the motor supply) missing. The unboxing
+  video shows it stuck to the packing tape. Part of its pad's surface came off with it
+  (copper still attached to the board), and the cap took some damage.
+- Decision: board A = main board, board B = spare. C2 left off for now; C1 (47 µF) and
+  C3 (10 µF) are on the same rail, so B still works without it. Kept the cap and photos.
+
+**Stage 0: visual inspection (both boards): pass**
+- Photographed both boards, then close-ups of the STM32 (LQFP-48) and DRV8316 (QFN)
+  under angled light. No solder bridges, all parts present, orientation matches on both
+  boards and matches the placement check.
+
+**Soldering (board A)**
+- Right-angle 1×5 header into J4 (SWD), pointing out past the board edge. It's lower than
+  a straight header, which helps the housing clearance later.
+- Jumper wires (plugs cut off) into J1 for power: red = square pad (+), black = −.
+- Tried to salvage a screw terminal from an old board for J1. Couldn't desolder it with a
+  fine tip, so I went with wires for now.
+- Lessons: fix an oxidised tip with rosin + fresh solder; a solder blob on a fine tip
+  helps heat big pads; the GND pin takes longer because of the ground planes.
+
+**Stage 1: power-off resistance checks (board A): pass**
+
+| Check | Reading (200k range) | Meaning |
+|---|---|---|
+| J1 + ↔ J1 − | 85.3 kΩ / over range (reversed) | no short; Q1 blocks reverse polarity |
+| VM ↔ PGND (C1) | 85.5 kΩ / 20.3 kΩ | no short (VM divider ∥ DRV8316) |
+| 3V3 ↔ GND (J4 1–5) | 24.5 kΩ / 14.3 kΩ | no short |
+| GND ↔ PGND (J4 5 ↔ J1 −) | ≈ 0 Ω | R4 net-tie OK; confirms J4 pin 5 = end nearest J3 |
+| VM ↔ 3V3 | 114.9 kΩ / 24.2 kΩ | 12 V side not shorted to 3.3 V side |
+| CANH ↔ CANL (J2) | 70.1 kΩ | JP1 termination open |
+
+- Learned: a lone "1" on the meter = over range, not 1 Ω. Readings that climb are the
+  capacitors charging. Measure both probe directions, because diodes and chips read
+  differently each way.
+
+**Next**
+- Stage 2 at the WARG bench: first power-up with a 50 mA current limit, ramp to 12 V,
+  check that the power LED comes on and nothing gets warm. Then Stage 3 (rail voltages)
+  and Stage 4 (SWD connect + option bytes).
+- In parallel: get board_fw building for the first blink/UART test.
+
+## Nov 20–26: encoder over SPI, nFAULT + watchdog, first power-up and firmware on board A, vbus + current offsets, mounted on the motor
+
+### Electrical: board A bring-up
+**Stage 2: first power-up (WARG bench, Nov 24): pass**
+- Keysight EDU36311A CH2, 50 mA current limit, ramped slowly from 0 to 12 V.
+- Setup mistakes before it worked: the voltage got set to 0.620 V and the current limit to 0.5 A / 1 A before
+  I got 0.050 A on the display. The alligator clips were on the plastic Dupont housings of my jumper-wire leads:
+  CV at 5.6 V with 0.000 A. Fixed by pushing male pins into the sockets and clipping onto the metal.
+- Power LED (D5) came on around 5 V. 32 mA at 5.11 V, **19 mA at 12.11 V**, steady for 1 minute, current
+  dropping as voltage rises (the buck draws roughly constant power). Nothing warm.
+- The clips touched while probing at 15 V: the supply went to CC at 0.11 V / 50 mA. The current limit did its
+  job. Re-measured J1 +/− at 85.3 kΩ, unchanged. Now I tape the leads down and keep the clips apart.
+
+**Stage 3: rail voltages: pass**
+
+| Check | Reading | Meaning |
+|---|---|---|
+| VM (C1) | 12.02 V at 12.11 V in | 0.09 V drop → Q1 (reverse-polarity FET) is on |
+| 3V3 (J4 pin 1) at 8 / 12 / 15 V in | 3.23 / 3.24 / 3.24 V | buck output steady across the input range |
+| AVDD (R6 bottom end) | 3.30 V | C12 sits too close to U1's pins to probe safely |
+| nFAULT (R6 top end) | 0.02 V (low) | allowed while DRVOFF holds the driver off |
+
+**Stage 4: SWD — the programmer was dead, not the board**
+- Nov 24: SWD idle levels on J4 were right (SWDIO high, SWCLK low, NRST high), but my ST-Link clone gave
+  "Unable to get core ID" at every speed. The CubeProgrammer GUI showed nothing useful; the CLI printed the
+  real error.
+- Back in my room I tested the clone on my G474 dev board: it only worked with the target's 3.3 V wired to it.
+  Measured the clone's own 3.3 V pin: **2.05 V**. Its regulator is dead. It only ever worked when the target
+  back-fed it. I'd started to worry the long SWD traces on my PCB were the cause; they weren't.
+- Nov 25: found a healthy clone in the WARG bay (3.3 V measured OK first). Connected first try at 100 kHz:
+  STM32G43x/G44x, Device ID 0x468, 128 KB.
+- Set option bytes nSWBOOT0 = 0, nBOOT0 = 1 (always boot from flash; PB8 = BOOT0 is also CAN RX). Verified
+  with `-ob displ`; RDP left at 0xAA.
+
+**Stages 5–6: first firmware (WARG, Nov 25): pass**
+- LED blinks every second from flash. `SystemCoreClock` = 170 MHz in Live Expressions, so the 8 MHz crystal
+  and PLL work. 31 mA at 12 V with the driver enabled; still cool.
+- `bootDriver()` passed first try: every DRV8316 SPI write read back, no faults after the clear.
+- Checked without UART: Live Expressions on `faultArmed` (true = bootDriver passed) and `SystemCoreClock`.
+
+**Evening at home (15 V USB-PD trigger, WARG's clone borrowed)**
+- **UART:** soldered the stripped ends of jumper wires straight onto the test pads. The terminal was blank at
+  first: TX/RX were crossed the wrong way. Swapping them fixed it. Also learned that only one program can hold
+  a COM port ("access denied" = Arduino's Serial Monitor still had it). Using Tera Term at 115200.
+- **DRV8316 register dump** (regs 3–8): `00000011 / 01100100 / 01000110 / 00010000 / 00000010 / 00010000`,
+  exactly as expected. No faults. NPOR is active-low: it reads 0 before the clear after a real power-cycle
+  (a power-on reset happened), then 1.
+- **Bus voltage (VM_SENSE through the ADC):** firmware ~14.7–14.9 V vs **14.94 V** on the meter. About 0.5 %
+  low, within resistor + ADC tolerance.
+- **Current-sense zero offsets:** A/B/C = **2073 / 2072 / 2072** counts. All three phases within a few counts
+  of each other, re-measured every boot.
+- **Encoder:** works on every read now (bug and fix under Firmware).
+
+### Mechanical: mounted on the motor
+- Board screwed onto the GM3506 through housing_rear's 2 mm printed plate, with printed washers under the screw
+  heads so no bare metal touches the board.
+- Motor wires up through the window, soldered to J5 (any order). Phase to phase: **5.6 / 5.6 / 5.6 Ω**. Each
+  phase to ground: 118.9 kΩ, so no shorts.
+- **Magnet test:** turning the motor by hand, the angle sweeps 0 → 16383 and wraps smoothly, CRC passes on
+  every read, magnet status = **0 (field normal)**. The magnet gap works through the plate with the current
+  sleeve.
+
+### Firmware: MT6701 encoder over SPI2 (SSI) with CRC
+- CubeMX: SPI2 changed to Full-Duplex Master, CPOL High, CPHA 1 Edge (SPI mode 2), 8-bit, prescaler 32
+  (5.3 MHz), software CS on PB12. MOSI put on PB15 (free pin, no trace).
+- Why full-duplex: a receive-only master keeps clocking for as long as SPI is enabled. Full-duplex with dummy
+  bytes gives an exact number of clocks.
+- Mode from the datasheet: CLK idles high, data changes on the rising edge, is read on the falling edge.
+- Constructor now `Encoder(&hspi2, ENC_CS_GPIO_Port, ENC_CS_Pin)` instead of the I2C one.
+- `update()`: CS low → `HAL_SPI_TransmitReceive` → CS high (before checking the status) → unpack into local
+  variables → check the CRC → only then copy into the members. A bad read changes nothing.
+- Frame = 24 bits: 14-bit angle, 4 magnet-status bits, 6-bit CRC.
+- `computeCrc()`: CRC-6, polynomial x^6 + x + 1 (`0b1000011`), start value 0 (the datasheet doesn't say),
+  done as binary long division over the 18 data bits. PC-tested: (10000, 9) → 11, (16383, 15) → 14, 0 → 0.
+- New `getMagStatus()`: bits 1–0 = field (0 normal, 1 too strong, 2 too weak), bit 3 = loss of track.
+- **Bug found at home and fixed.** Every read after the first failed its CRC, so the angle froze. (The "pass"
+  at WARG was a single first read, and a random 6-bit CRC matches about 1 time in 64.) Captured the raw bytes
+  at a breakpoint and tested bit shifts against my CRC function: the MT6701 sends **one extra bit before the
+  angle**, so the 24-bit frame needs 25 clocks and my 3-byte read cut off the last CRC bit.
+  - Fix: read 4 bytes (32 clocks) and take `frame = (word >> 7) & 0xFFFFFF`.
+  - The first read was then the odd one out: HAL switched SPI2 on inside the first transfer, after CS was
+    already low, and the MT6701 counted the clock line jumping to idle-high as an extra clock. Fix:
+    `__HAL_SPI_ENABLE(&hspi2)` once at startup.
+  - Tried SPI mode 3 on the way; it wasn't the cause. Back on mode 2.
+  - Now `status=0` on every read, including the first.
+
+### Firmware: nFAULT interrupt (latched shutdown) + IWDG watchdog
+- CubeMX already had PB11 = EXTI falling edge, so only app.cpp changed.
+- `HAL_GPIO_EXTI_Callback(pin)` (ST's copy is "weak" and empty, so writing one with the same name replaces it):
+  wrong pin → return; not armed → return; DRV_OFF high + PHASE_EN low by direct register writes (same as
+  HardFault_Handler); `faultLatched = true`. The driver is off within microseconds.
+- Two `volatile bool` flags shared between the interrupt and the main code: `faultArmed`, `faultLatched`.
+  volatile = always read from RAM, because an interrupt can change it.
+- Armed only after bootDriver() succeeds: DRV_OFF high at boot can pull nFAULT low by itself, which would look
+  like a fault. Right after arming, read the pin once: if nFAULT was already low there's no new edge, so the
+  interrupt would never fire.
+- No SPI inside the interrupt: the HAL timeout counts with HAL_GetTick(), whose TIM6 interrupt has the same
+  priority and can't run. The main loop reads and prints which fault it was.
+- Latched = never cleared in code, only a reset turns it back on.
+- IWDG: prescaler 64, reload 999 → 64 × 1000 / 32 kHz = 2.0 s timeout. Refreshed once per loop pass and inside
+  every "stop forever" loop. Otherwise a stop → 2 s → reset → boot clears the faults → driver back on → fault
+  again, every 2 s.
+- `__HAL_DBGMCU_FREEZE_IWDG()` next to the TIM1 freeze, so a breakpoint doesn't reset the chip.
+- Committed together: "board_fw: nFAULT latched shutdown + IWDG (2 s) with debug freeze".
+
+### Firmware: calibrate()
+- Own function, same shape as bootDriver(): hold vd = 2.5 V at θe = 0 for 1 s → read the encoder (up to 3
+  tries) → magnet status must be 0 → offset → `setCalibration(offset, 1)` → 0 V → print "cal ok offset=".
+- Direction +1 is a guess for the board (dev rig was +1). Jerks or runs away → try −1.
+
+### Firmware: RUN_MOTOR switch + control loop
+- `static constexpr bool RUN_MOTOR`: false = blink loop (bring-up Stages 5–7, no motor), true = calibrate +
+  control loop (Stage 8). My call: if calibration always ran, it would fail with no magnet and stop the board
+  before the encoder test.
+- Control loop = the dev-rig loop moved over: fault check → watchdog → velocity PI every 1 ms → encoder → θe →
+  duties every pass. `USE_VELOCITY_LOOP = false` for the first spin (fixed VQ = 1.0 V).
+- 20 failed encoder reads in a row → driver off, print, stop forever (the dev rig kept looping silently).
+- `stopOnFault()`: one function for both loops; prints which fault from the IC status register.
+- Deleted the old parked `focVelocityTest()` (half-broken copy, caused all the unused-variable warnings).
+
+### Firmware: prints that don't freeze the loop
+- `HAL_UART_Transmit` waits for every character: 32 chars × 87 µs = 2.8 ms with the duties frozen.
+- Plotter prints now use `HAL_UART_Transmit_IT` (sent in the background by the USART interrupt) every 20 ms,
+  into their own buffer, only when `huart1.gState == HAL_UART_STATE_READY`.
+- `waitForUart()` before the stop messages: HAL has no queue, so a blocking print during a background one
+  returns HAL_BUSY and the message is lost.
+
+### Firmware: ADC (vbus + current-sense zero offsets)
+- `HAL_ADCEx_Calibration_Start()` once at boot, before the ADC is first started (covers all channels).
+- `readVbus()`: VM goes through a 100k/10k divider (÷11) to PA3. vbus = counts / 4095 × 3.24 × 11.
+  3.24 V = the measured 3V3 rail, which is the ADC reference. Assuming 3.3 V would read 1.8 % high.
+  Expect ~1379 counts at 12 V. No `HAL_ADC_Stop` (it would switch off the whole ADC).
+- Why vbus matters: computeDuties() divides by it. Code says 12 V on a 15 V supply → ask 1.0 V, get 1.25 V.
+- `measureCurrentOffsets()`: TIM1 channel 4 (no pin) set to 4249 (near the PWM peak, all low-side FETs on)
+  triggers the injected ADC group (SOA/SOB/SOC) every 50 µs. 64 readings averaged per phase at zero current
+  (duty 0 + PHASE_EN high). Must be within 2085 ± 200 counts (AVDD/2 = 1.65 V).
+- CubeMX: ADC end-of-conversion = "end of sequence". Reading ST's HAL source showed the injected poll only
+  waits for rank 1 otherwise, so SOB/SOC would be from the previous trigger.
+- `step6-explained.md` written as a plain-words walkthrough of everything in step 6.
+
+### Firmware: measured vbus into FocController + range check (step 7a-2)
+- vbus is now read once at boot, right after the ADC self-calibration and before the objects are made, and
+  passed to the constructor: `FocController myFocController(vbus, 3.0f, 11)` instead of `12.0f`.
+  Read fails → print "vbus read failed", stop forever (driver still off at that point). Prints `vbus mV=`.
+- Range check `VBUS_MIN = 8.0f` / `VBUS_MAX = 20.0f`: outside it → driver off, "vbus out of range, driver
+  off", stop forever. Why these limits:
+  - above 20 V the input TVS (SMBJ18A, breakdown 20.0–22.1 V) starts conducting, and the PTC is only rated
+    24 V. Realistic cause: the PD trigger set to 20 V by mistake.
+  - below 8 V: the 3V3 rail was only measured flat from 8–15 V. A reading that low more likely means a broken
+    divider or the supply being off, and 0 V would make computeDuties() divide by 0.
+- The check sits right before calibrate(), not at the top, so a bad ADC reading can't stop the register dump
+  and the encoder test. In blink mode the loop prints vbus every second anyway.
+- Renamed the blink loop's own `float vbus` to `vbusNow`, so it doesn't hide the outer `vbus`.
+
+### Lessons
+- CRC = the remainder of a binary division; sender and receiver divide the same bits the same way, so any
+  flipped bit almost always changes the remainder.
+- One passing CRC proves nothing: a random 6-bit CRC matches 1 time in 64. Check many reads in a row.
+- `static_cast` has to wrap the whole expression (the last operation), not one part of it.
+- Unpack into locals, check, then assign: a failed read must not change any member.
+- `a->b` = follow the pointer `a`, then use its member `b` (`DRV_OFF_GPIO_Port->BSRR`).
+- `extern "C"` keeps a function's plain C name so ST's C code can find it.
+- Code outside a CubeMX USER CODE block is deleted on the next Generate (happened with the freeze line).
+- A variable isn't a register: `uint16_t CCR4 = ...` stores a number, `__HAL_TIM_SET_COMPARE` writes the timer.
+- Average after the loop, not inside it (inside, the first pass divides one reading by 64 and fails).
+- Measure reference voltages instead of assuming the nominal value.
+- A watchdog changes what "stop forever" means: every stop loop has to keep feeding it.
+- A check that only prints doesn't stop anything: a refuse-to-run check needs its stop loop.
+- When unsure what HAL does, read its source: it's in the project's Drivers folder.
+- Test the tool before blaming the board: measure the programmer's own 3.3 V.
+- Soldering: the UART test pads are tiny and close together. The GND wire's joint ended up almost touching a
+  signal wire's joint, and later the RX wire came off (not needed: the firmware only sends). I'm not soldering
+  on those pads again; CAN on J2 needs no soldering.
+- An oxidised tip won't take solder at all. Rosin + fresh solder to re-tin, and melt solder on the joint, not
+  on the tip, so the flux isn't burnt off before it reaches the pad.
+- The white film after soldering is rosin residue: harmless, cleans off with IPA.
+
+### Next
+- Stage 8 at WARG: first spin on the bench supply (12 V, 0.3–0.5 A limit), `RUN_MOTOR = true`, fixed
+  VQ = 1 V, watched with Live Expressions. Probably with the gearbox front taken off so the rotor is free for
+  calibration.
+- At home on the PD trigger: CAN bring-up on J2 with the CANable (check the GH cable's pin order, termination,
+  then a heartbeat frame and a Python script that prints it).
+- Then the current loop: readings → amps → Clarke/Park → Id/Iq PI in the ADC interrupt.

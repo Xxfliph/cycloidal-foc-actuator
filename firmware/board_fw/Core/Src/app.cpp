@@ -27,6 +27,14 @@
 volatile bool faultArmed = false;    // set by app_main after "drv ready"; read by the callback
 volatile bool faultLatched = false;  // set by the callback (or the level check); read by the loop
 
+// Debug values for CubeIDE Live Expressions (only globals show up there)
+// dbgStage: 1 = drv ready, 2 = cal ok, 3 = running,
+//          -1 = cal failed (encoder read), -2 = cal failed (magnet status), -3 = encoder failed while running
+volatile int   dbgStage = 0;
+volatile float dbgCalOffset = 0.0f;   // electrical offset found by calibrate()
+volatile float dbgAngle = 0.0f;       // mechanical angle (rad)
+volatile float dbgVel = 0.0f;         // velocity (rad/s)
+
 /*
  * Runs automatically when PB11 (DRV_FAULT = DRV8316 nFAULT) goes from high to low.
  * Chain: PB11 falls -> EXTI15_10_IRQHandler (stm32g4xx_it.c) -> HAL_GPIO_EXTI_IRQHandler
@@ -212,6 +220,7 @@ HAL_StatusTypeDef calibrate(FocController& foc, MotorDriver& motor, Encoder& enc
 	if (readOk == false) {
 		len = snprintf(msg, sizeof(msg), "cal failed: encoder read\r\n");
 		HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+		dbgStage = -1;
 		return HAL_ERROR;
 	}
 
@@ -227,6 +236,7 @@ HAL_StatusTypeDef calibrate(FocController& foc, MotorDriver& motor, Encoder& enc
 	if (((enc.getMagStatus() >> 0) & 0b11) != 0) {
 		len = snprintf(msg, sizeof(msg), "cal failed: magnet status\r\n");
 		HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+		dbgStage = -2;
 		return HAL_ERROR;
 	}
 
@@ -239,6 +249,7 @@ HAL_StatusTypeDef calibrate(FocController& foc, MotorDriver& motor, Encoder& enc
 	 */
 	float offset = foc.electricalAngle(enc.getAngle());
 	foc.setCalibration(offset, 1);
+	dbgCalOffset = offset;
 
 	// Step 5: vd = vq = 0 -> all three duties equal (0.5) -> no voltage across the windings
 	// -> rotor is free and no current flows until the control loop takes over.
@@ -383,7 +394,7 @@ void app_main() {
 	CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;   // turn on the debug/trace block DWT lives in
 	DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;              // start the cycle counter
 
-	static constexpr bool RUN_MOTOR = false;
+	static constexpr bool RUN_MOTOR = true;
 	static constexpr float VBUS_MIN = 8.0f;
 	static constexpr float VBUS_MAX = 20.0f;
 
@@ -437,6 +448,7 @@ void app_main() {
 		}
 	}
 
+	dbgStage = 1;
 	/*
 	 * Arm the fault alarm. bootDriver() has finished: DRV_OFF is low and CLR_FLT has
 	 * cleared the boot faults, so from here on nFAULT low means a real fault.
@@ -508,14 +520,14 @@ void app_main() {
 			HAL_IWDG_Refresh(&hiwdg);
 		}
 	}
-	
+	dbgStage = 2;
 	//variable declarations for FOC control
 	myPIController.reset();
 	float dutyArray[3];
 	uint8_t failedReads = 0;
 	static constexpr uint8_t MAX_FAILED_READS = 20;
-	static constexpr float VQ = 1.0f;
-	static constexpr bool USE_VELOCITY_LOOP = false;
+	static constexpr float VQ = -1.0f;
+	static constexpr bool USE_VELOCITY_LOOP = true;
 	static constexpr float STEP_VEL = 10.0f;
 	static constexpr uint32_t STEP_DELAY_MS = 3000;
 	float vq = 0.0f;
@@ -576,6 +588,11 @@ void app_main() {
 
 		if (myEncoder.update() == HAL_OK) {
 			failedReads = 0;
+
+			dbgStage = 3;
+			dbgAngle = myEncoder.getAngle();
+			dbgVel = myEncoder.getVelocity();
+
 			float thetaE = myFocController.electricalAngle(myEncoder.getAngle());
 			if (USE_VELOCITY_LOOP) {
 				myFocController.computeDuties(0.0f, vq, thetaE, dutyArray);
@@ -590,6 +607,7 @@ void app_main() {
 		}
 		if (failedReads > MAX_FAILED_READS) {
 			myMotorDriver.disable();
+			dbgStage = -3;
 			myPIController.reset();
 
 				waitForUart();   // same reason: make sure "encoder failed" actually gets sent

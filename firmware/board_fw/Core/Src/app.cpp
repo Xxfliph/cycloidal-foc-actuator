@@ -384,6 +384,8 @@ void app_main() {
 	DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;              // start the cycle counter
 
 	static constexpr bool RUN_MOTOR = false;
+	static constexpr float VBUS_MIN = 8.0f;
+	static constexpr float VBUS_MAX = 20.0f;
 
 	char msg[128];
 
@@ -398,16 +400,30 @@ void app_main() {
 		}
 	}
 
+	float vbus = 0.0f;
+	if (readVbus(vbus) != HAL_OK) {
+		int len = snprintf(msg, sizeof(msg), "vbus read failed\r\n");
+		HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+		while (true) {
+			HAL_IWDG_Refresh(&hiwdg);
+		}
+	}
+	int len = snprintf(msg, sizeof(msg), "vbus mV=%d\r\n", static_cast<int>(vbus * 1000.0f));
+	HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+
 	/*
 	* Drv8316 class configures the chip and reads its status. It talks through SPI
 	* MotorDriver class runs the power stage: PWM duties + on/off. It talks through TIM1 and the GPIO pins
 	* Encoder class reads the MT6701 angle + magnet status and checks the CRC. It talks through SPI2.
-	* FocController class is pure math (park/Clarke/SVPWM to create duties). No hardware. (vbus, vlimit, polePairs), vbus must match the real supply
+	* FocController class is pure math (park/Clarke/SVPWM to create duties). No hardware. (vbus, vlimit, polePairs), vbus matches the real supply
 	*/
 	Drv8316 myDrv8316(&hspi3, DRV_CS_GPIO_Port, DRV_CS_Pin);
 	MotorDriver myMotorDriver(&htim1, DRV_OFF_GPIO_Port, DRV_OFF_Pin, PHASE_EN_GPIO_Port, PHASE_EN_Pin);
+
 	Encoder myEncoder(&hspi2, ENC_CS_GPIO_Port, ENC_CS_Pin);
-	FocController myFocController(12.0f, 3.0f, 11);
+	__HAL_SPI_ENABLE(&hspi2);
+
+	FocController myFocController(vbus, 3.0f, 11);
 	PIController myPIController(0.3f, 3.0f, 2.0f);   // (kp, ki, outLimit) = your tuned dev-rig gains
 
 	
@@ -443,7 +459,7 @@ void app_main() {
 			HAL_IWDG_Refresh(&hiwdg);
 		}
 	}
-	int len = snprintf(msg, sizeof(msg), "offsets A=%d B=%d C=%d\r\n", static_cast<int>(currentOffsets[0]), static_cast<int>(currentOffsets[1]), static_cast<int>(currentOffsets[2]));
+	len = snprintf(msg, sizeof(msg), "offsets A=%d B=%d C=%d\r\n", static_cast<int>(currentOffsets[0]), static_cast<int>(currentOffsets[1]), static_cast<int>(currentOffsets[2]));
 	HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
 
 	if (RUN_MOTOR == false) {
@@ -465,10 +481,19 @@ void app_main() {
 			len = snprintf(msg, sizeof(msg), "enc status=%d count=%d mag=%d\r\n", static_cast<int>(encStatus), myEncoder.getRawCount(), myEncoder.getMagStatus());
 			HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
 
-			float vbus = 0.0f;
-			HAL_StatusTypeDef vbusStatus = readVbus(vbus);
-			len = snprintf(msg, sizeof(msg), "vbus status=%d mV=%d\r\n", static_cast<int>(vbusStatus), static_cast<int>(vbus * 1000.0f));
+			float vbusNow = 0.0f;
+			HAL_StatusTypeDef vbusStatus = readVbus(vbusNow);
+			len = snprintf(msg, sizeof(msg), "vbus status=%d mV=%d\r\n", static_cast<int>(vbusStatus), static_cast<int>(vbusNow * 1000.0f));
 			HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+		}
+	}
+
+	if (vbus < VBUS_MIN || vbus > VBUS_MAX ) {
+		myMotorDriver.disable();
+		int len = snprintf(msg, sizeof(msg), "vbus out of range, driver off\r\n");
+		HAL_UART_Transmit(&huart1, reinterpret_cast<uint8_t*>(msg), len, 10);
+		while (true) {
+			HAL_IWDG_Refresh(&hiwdg);
 		}
 	}
 
